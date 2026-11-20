@@ -122,7 +122,7 @@ export default function HomePublica() {
           </div>
 
           <a
-            href="https://wa.me/5568999999999"
+            href="https://wa.me/5568999533619"
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-3 text-[#E5C17B] hover:text-white transition"
