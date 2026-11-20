@@ -2,10 +2,11 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
 import ProtectedRoute from './ProtectedRoute';
 import HomePublica from './HomePublica';
+import PainelAdmin from './PainelAdmin';
 
 const PlaceholderPainel = ({ titulo }) => (
-  <div className="min-h-screen bg-[#0F0F12] text-white flex items-center justify-center">
-    <h1 className="text-3xl font-bold font-condensed text-[#D81B60]">{titulo}</h1>
+  <div className="min-h-screen bg-[#F4F4F6] text-zinc-900 flex items-center justify-center">
+    <h1 className="text-3xl font-bold font-condensed text-[#4A041C]">{titulo}</h1>
   </div>
 );
 
@@ -20,7 +21,7 @@ export default function App() {
             path="/admin/*"
             element={
               <ProtectedRoute allowedRole="admin">
-                <PlaceholderPainel titulo="Painel Coordenação / Admin (Etapa 2)" />
+                <PainelAdmin />
               </ProtectedRoute>
             }
           />
