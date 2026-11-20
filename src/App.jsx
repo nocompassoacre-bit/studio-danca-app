@@ -3,6 +3,7 @@ import { AuthProvider } from './AuthContext';
 import ProtectedRoute from './ProtectedRoute';
 import HomePublica from './HomePublica';
 import PainelAdmin from './PainelAdmin';
+import InscricaoPublica from './InscricaoPublica';
 
 const PlaceholderPainel = ({ titulo }) => (
   <div className="min-h-screen bg-[#F4F4F6] text-zinc-900 flex items-center justify-center">
@@ -16,6 +17,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomePublica />} />
+          <Route path="/inscricao/:tipo/:id" element={<InscricaoPublica />} />
           
           <Route
             path="/admin/*"
