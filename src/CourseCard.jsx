@@ -1,18 +1,19 @@
 import { Calendar, Clock, Hourglass, UserCheck, Sparkles, ArrowUpRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
-export default function CourseCard({ curso, onMatricular }) {
-  const isFerias = curso.tipo === 'ferias';
+export default function CourseCard({ curso }) {
+  const isEspecial = curso.tipo !== 'fixo';
 
   return (
     <div className="group relative flex flex-col justify-between rounded-2xl bg-[#18181F] border border-zinc-800/80 hover:border-[#D81B60] transition-all duration-300 overflow-hidden shadow-lg">
       <div className={`px-5 py-2.5 flex items-center justify-between text-xs font-bold uppercase tracking-widest ${
-        isFerias 
+        isEspecial 
           ? 'bg-gradient-to-r from-[#D81B60] to-[#880E4F] text-white' 
           : 'bg-[#2D0210] text-zinc-200 border-b border-zinc-800'
       }`}>
         <span className="flex items-center gap-1.5">
-          {isFerias && <Sparkles size={14} />}
-          {isFerias ? 'Curso de Férias' : 'Turma Regular'}
+          {isEspecial && <Sparkles size={14} />}
+          {curso.tipoLabel || (isEspecial ? 'Curso Especial' : 'Turma Regular')}
         </span>
         <span className="bg-black/30 px-2.5 py-0.5 rounded-full text-[11px]">
           {curso.estilo}
@@ -36,7 +37,7 @@ export default function CourseCard({ curso, onMatricular }) {
             <div className="flex items-center gap-2.5">
               <Calendar size={16} className="text-[#D81B60] shrink-0" />
               <span>
-                <strong className="text-zinc-400 font-semibold">Início / Dias:</strong> {curso.dataInfo}
+                <strong className="text-zinc-400 font-semibold">Data:</strong> {curso.dataInfo} ({curso.horaInicio || '19:00'} às {curso.horarioFim || '21:00'})
               </span>
             </div>
 
@@ -68,13 +69,13 @@ export default function CourseCard({ curso, onMatricular }) {
             </span>
           </div>
 
-          <button
-            onClick={() => onMatricular(curso)}
+          <Link
+            to={`/inscricao/curso/${curso.id}`}
             className="flex items-center gap-1.5 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition"
           >
-            Matricular
+            Inscrever-se
             <ArrowUpRight size={16} />
-          </button>
+          </Link>
         </div>
       </div>
     </div>
