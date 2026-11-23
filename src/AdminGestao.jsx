@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
-import { UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check, Users, X } from 'lucide-react';
+import { addDoc, collection, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check, FolderOpen } from 'lucide-react';
 import { db } from './firebase';
+import CursoDetalhesAdmin from './CursoDetalhesAdmin';
 
 const MODALIDADES = [
   { id: 'fixo', label: 'Turma Fixa (Regular)' },
@@ -14,15 +15,10 @@ const MODALIDADES = [
   { id: 'encontro', label: 'Encontro / Prática' },
 ];
 
-export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar }) {
+export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro, recarregar }) {
   const [copiadoId, setCopiadoId] = useState(null);
-
-  // Modal de Participantes do Curso
-  const [cursoSelecionado, setCursoSelecionado] = useState(null);
-  const [participantesCurso, setParticipantesCurso] = useState([]);
-  const [usuarioParaAdicionar, setUsuarioParaAdicionar] = useState('');
-  const [situacaoFinanceiraAdd, setSituacaoFinanceiraAdd] = useState('bolsista_isento'); // 'bolsista_isento' | 'pago_balcao' | 'pendente'
-  const [carregandoPart, setCarregandoPart] = useState(false);
+  const [cursoAbertoId, setCursoAbertoId] = useState(null);
+  const [filtroFrente, setFiltroFrente] = useState('todas'); // 'todas' | 'Dança de Salão' | 'Ballet'
 
   // Estados para Cadastro de Usuários
   const [nome, setNome] = useState('');
@@ -37,6 +33,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
   const [criandoUser, setCriandoUser] = useState(false);
 
   // Estados para Cadastro de Cursos
+  const [frente, setFrente] = useState('Dança de Salão');
   const [tituloCurso, setTituloCurso] = useState('');
   const [tipoCurso, setTipoCurso] = useState('fixo');
   const [estilo, setEstilo] = useState('Forró');
@@ -47,7 +44,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
   const [duracaoAula, setDuracaoAula] = useState('1h30');
   const [duracaoTotal, setDuracaoTotal] = useState('Mensal');
   const [profIdSelecionado, setProfIdSelecionado] = useState('');
-  const [gerarFormInscricao, setGerarFormInscricao] = useState(true);
+  const [ementaInicial, setEmentaInicial] = useState('');
 
   // Estados para Cadastro de Eventos
   const [tituloEvento, setTituloEvento] = useState('');
@@ -59,84 +56,12 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
   const [descEvento, setDescEvento] = useState('');
 
   const profs = usuarios.filter((u) => u.role === 'prof');
-  const alunosEBolsistas = usuarios.filter((u) => u.role === 'aluno' || u.role === 'bolsista');
 
   const copiarLinkInscricao = (tipo, id) => {
     const url = `${window.location.origin}/inscricao/${tipo}/${id}`;
     navigator.clipboard.writeText(url);
     setCopiadoId(id);
     setTimeout(() => setCopiadoId(null), 2500);
-  };
-
-  // Abrir gerenciador de participantes de um curso específico
-  const abrirParticipantes = async (curso) => {
-    setCursoSelecionado(curso);
-    setCarregandoPart(true);
-    try {
-      const q = query(collection(db, 'matriculas'), where('cursoId', '==', curso.id));
-      const snap = await getDocs(q);
-      setParticipantesCurso(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setCarregandoPart(false);
-    }
-  };
-
-  const handleAdicionarParticipanteManual = async (e) => {
-    e.preventDefault();
-    if (!usuarioParaAdicionar || !cursoSelecionado) return;
-    const pessoa = usuarios.find((u) => u.id === usuarioParaAdicionar);
-    if (!pessoa) return;
-
-    const jaInscrito = participantesCurso.some((p) => p.alunoId === pessoa.id);
-    if (jaInscrito) {
-      alert('Esta pessoa já está na lista de participantes deste curso.');
-      return;
-    }
-
-    const hoje = new Date().toISOString().split('T')[0];
-    try {
-      await addDoc(collection(db, 'matriculas'), {
-        alunoId: pessoa.id,
-        alunoNome: pessoa.nome,
-        roleParticipante: pessoa.role, // 'aluno' ou 'bolsista'
-        cursoId: cursoSelecionado.id,
-        cursoTitulo: cursoSelecionado.titulo,
-        tipoInscricao: 'manual_admin',
-        dataMatricula: hoje,
-        diasRestantes: 30,
-        status: 'ativa',
-      });
-
-      // Se não for bolsista isento, gera lançamento no financeiro
-      if (situacaoFinanceiraAdd !== 'bolsista_isento' && Number(cursoSelecionado.valor) > 0) {
-        await addDoc(collection(db, 'financeiro'), {
-          tipo: 'receita',
-          alunoId: pessoa.id,
-          cursoId: cursoSelecionado.id,
-          valor: Number(cursoSelecionado.valor),
-          dataVencimento: hoje,
-          dataPagamento: situacaoFinanceiraAdd === 'pago_balcao' ? hoje : '',
-          status: situacaoFinanceiraAdd === 'pago_balcao' ? 'pago' : 'pendente',
-          metodo: situacaoFinanceiraAdd === 'pago_balcao' ? 'Recepção / Balcão' : 'A Receber',
-          observacao: `Inclusão Manual (${cursoSelecionado.titulo}) - ${pessoa.nome}`,
-          criadoEm: new Date().toISOString(),
-        });
-      }
-
-      setUsuarioParaAdicionar('');
-      abrirParticipantes(cursoSelecionado);
-      recarregar();
-    } catch (err) {
-      alert('Erro ao adicionar participante: ' + err.message);
-    }
-  };
-
-  const handleRemoverParticipante = async (matriculaId) => {
-    if (!window.confirm('Remover este participante da turma?')) return;
-    await deleteDoc(doc(db, 'matriculas', matriculaId));
-    abrirParticipantes(cursoSelecionado);
   };
 
   const handleCriarUsuario = async (e) => {
@@ -201,6 +126,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
     const modObj = MODALIDADES.find((m) => m.id === tipoCurso);
     try {
       await addDoc(collection(db, 'cursos'), {
+        frente,
         titulo: tituloCurso,
         tipo: tipoCurso,
         tipoLabel: modObj ? modObj.label : 'Turma',
@@ -213,14 +139,16 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
         duracaoTotal,
         profId: profIdSelecionado,
         professoresNomes: profObj ? profObj.nome : 'Equipe No Compasso',
-        inscricaoAberta: gerarFormInscricao,
+        ementa: ementaInicial,
+        inscricaoAberta: true,
         ativo: true,
         criadoEm: new Date().toISOString(),
       });
       setTituloCurso('');
       setValorCurso('');
       setDataInfo('');
-      alert('Curso lançado! Agora você pode copiar o link de inscrição ou adicionar participantes manualmente.');
+      setEmentaInicial('');
+      alert('Curso lançado com sucesso!');
       recarregar();
     } catch (err) {
       alert('Erro ao criar curso: ' + err.message);
@@ -257,7 +185,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
     }
   };
 
-  // ABA 1: USUÁRIOS
+  // ABA 1: USUÁRIOS (Alunos, Bolsistas, Professores, Admins)
   if (aba === 'usuarios') {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -446,8 +374,25 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
     );
   }
 
-  // ABA 2: CURSOS & TURMAS
+  // ABA 2: CURSOS & TURMAS (Com Frentes: Dança de Salão e Ballet + Abrir Curso)
   if (aba === 'cursos') {
+    const cursoDetalhe = cursos.find((c) => c.id === cursoAbertoId);
+    if (cursoDetalhe) {
+      return (
+        <CursoDetalhesAdmin
+          curso={cursoDetalhe}
+          usuarios={usuarios}
+          financeiro={financeiro}
+          onVoltar={() => setCursoAbertoId(null)}
+          recarregarGeral={recarregar}
+        />
+      );
+    }
+
+    const cursosFiltrados = cursos.filter((c) =>
+      filtroFrente === 'todas' ? true : (c.frente || 'Dança de Salão') === filtroFrente
+    );
+
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
@@ -457,6 +402,30 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
           </div>
 
           <form onSubmit={handleCriarCurso} className="space-y-3">
+            {/* Frente do Studio: Dança de Salão ou Ballet */}
+            <div>
+              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Frente do Studio</label>
+              <div className="grid grid-cols-2 gap-2">
+                {['Dança de Salão', 'Ballet'].map((itemFrente) => (
+                  <button
+                    type="button"
+                    key={itemFrente}
+                    onClick={() => {
+                      setFrente(itemFrente);
+                      setEstilo(itemFrente === 'Ballet' ? 'Ballet Clássico' : 'Forró');
+                    }}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold uppercase border transition ${
+                      frente === itemFrente
+                        ? 'bg-[#4A041C] text-white border-[#4A041C]'
+                        : 'bg-zinc-50 text-zinc-600 border-zinc-300 hover:bg-zinc-100'
+                    }`}
+                  >
+                    {itemFrente}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Modalidade</label>
               <select
@@ -475,7 +444,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
               <input
                 type="text"
                 required
-                placeholder="Ex: Intensivo de Bolero & Soltinho"
+                placeholder={frente === 'Ballet' ? 'Ex: Ballet Infantil / Baby Class' : 'Ex: Intensivo de Bolero & Soltinho'}
                 value={tituloCurso}
                 onChange={(e) => setTituloCurso(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
@@ -484,11 +453,11 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Estilo</label>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Estilo / Nível</label>
                 <input
                   type="text"
                   required
-                  placeholder="Forró, Bolero..."
+                  placeholder={frente === 'Ballet' ? 'Clássico, Baby...' : 'Forró, Bolero...'}
                   value={estilo}
                   onChange={(e) => setEstilo(e.target.value)}
                   className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
@@ -527,7 +496,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
               <input
                 type="text"
                 required
-                placeholder="Ex: 15 e 16 de Jan • Sáb e Dom"
+                placeholder="Ex: Ter e Qui"
                 value={dataInfo}
                 onChange={(e) => setDataInfo(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
@@ -578,6 +547,17 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
               </div>
             </div>
 
+            <div>
+              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Ementa / Resumo do Curso</label>
+              <textarea
+                rows="2"
+                placeholder="Objetivos e conteúdo..."
+                value={ementaInicial}
+                onChange={(e) => setEmentaInicial(e.target.value)}
+                className="w-full rounded-xl border border-zinc-300 p-2 text-sm text-zinc-900"
+              />
+            </div>
+
             <button
               type="submit"
               className="w-full rounded-xl bg-[#4A041C] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#2D0210] transition"
@@ -587,17 +567,36 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
           </form>
         </div>
 
-        {/* Lista de Cursos com Gerenciador de Participantes e Link */}
+        {/* Lista de Cursos com Filtro por Frente e Botão "Abrir Curso" */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
-          <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900 mb-4">
-            Lançamentos & Histórico de Cursos ({cursos.length})
-          </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900">
+              Cursos & Turmas ({cursosFiltrados.length})
+            </h3>
+
+            <div className="flex gap-1.5">
+              {['todas', 'Dança de Salão', 'Ballet'].map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFiltroFrente(f)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase ${
+                    filtroFrente === f ? 'bg-[#D81B60] text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                  }`}
+                >
+                  {f === 'todas' ? 'Todas as Frentes' : f}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="space-y-3">
-            {cursos.map((c) => (
-              <div key={c.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 bg-zinc-50">
+            {cursosFiltrados.map((c) => (
+              <div key={c.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 bg-zinc-50 hover:border-[#4A041C]/40 transition">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-[#4A041C] text-white text-[10px] font-bold uppercase">
+                      {c.frente || 'Dança de Salão'}
+                    </span>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                       c.tipo === 'fixo' ? 'bg-zinc-800 text-white' : 'bg-[#D81B60] text-white'
                     }`}>
@@ -612,16 +611,16 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => abrirParticipantes(c)}
-                    className="flex items-center gap-1.5 rounded-lg bg-[#4A041C] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2D0210] transition"
+                    onClick={() => setCursoAbertoId(c.id)}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#4A041C] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#2D0210] transition shadow-sm"
                   >
-                    <Users size={14} />
-                    Participantes
+                    <FolderOpen size={14} />
+                    Abrir Curso
                   </button>
 
                   <button
                     onClick={() => copiarLinkInscricao('curso', c.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-1.5 text-xs font-bold text-[#D81B60] hover:bg-pink-100 transition"
+                    className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-2 text-xs font-bold text-[#D81B60] hover:bg-pink-100 transition"
                   >
                     {copiadoId === c.id ? <Check size={14} /> : <Link2 size={14} />}
                     {copiadoId === c.id ? 'Copiado!' : 'Link Form'}
@@ -629,7 +628,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
 
                   <button
                     onClick={() => handleAlternarStatusCurso(c)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase ${
+                    className={`px-2.5 py-2 rounded-lg text-[11px] font-bold uppercase ${
                       c.ativo
                         ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                         : 'bg-zinc-200 text-zinc-600 hover:bg-zinc-300'
@@ -642,92 +641,6 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
             ))}
           </div>
         </div>
-
-        {/* MODAL: GERENCIAR PARTICIPANTES (ALUNOS E BOLSISTAS) NO CURSO */}
-        {cursoSelecionado && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-zinc-200">
-              <div className="flex items-center justify-between border-b border-zinc-200 pb-3 mb-4">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-[#D81B60]">Gestão de Turma</span>
-                  <h3 className="text-xl font-bold uppercase font-condensed text-[#4A041C]">
-                    Participantes: {cursoSelecionado.titulo}
-                  </h3>
-                </div>
-                <button onClick={() => setCursoSelecionado(null)} className="text-zinc-400 hover:text-zinc-800">
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Adicionar Aluno ou Bolsista manualmente */}
-              <form onSubmit={handleAdicionarParticipanteManual} className="bg-zinc-50 p-4 rounded-xl border border-zinc-200 space-y-3 mb-4">
-                <p className="text-xs font-bold uppercase text-zinc-600">Incluir Aluno ou Bolsista Manualmente</p>
-
-                <select
-                  required
-                  value={usuarioParaAdicionar}
-                  onChange={(e) => setUsuarioParaAdicionar(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
-                >
-                  <option value="">Selecione um Aluno ou Bolsista cadastrado...</option>
-                  {alunosEBolsistas.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.nome} ({u.role.toUpperCase()})
-                    </option>
-                  ))}
-                </select>
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select
-                    value={situacaoFinanceiraAdd}
-                    onChange={(e) => setSituacaoFinanceiraAdd(e.target.value)}
-                    className="flex-1 rounded-xl border border-zinc-300 bg-white p-2 text-xs font-semibold text-zinc-800"
-                  >
-                    <option value="bolsista_isento">Bolsista / Isento (Sem cobrança)</option>
-                    <option value="pago_balcao">Aluno Pago no Balcão (Lança Receita)</option>
-                    <option value="pendente">Aluno A Receber (Lança Pendência)</option>
-                  </select>
-
-                  <button
-                    type="submit"
-                    className="rounded-xl bg-[#D81B60] px-4 py-2 text-xs font-bold uppercase text-white hover:bg-[#AD1457]"
-                  >
-                    + Incluir na Turma
-                  </button>
-                </div>
-              </form>
-
-              {/* Lista de Inscritos */}
-              <div className="max-h-60 overflow-y-auto space-y-2">
-                {carregandoPart ? (
-                  <p className="text-xs text-center text-zinc-500 py-4">Carregando participantes...</p>
-                ) : participantesCurso.length === 0 ? (
-                  <p className="text-xs text-center text-zinc-400 py-4">Nenhum participante inscrito nesta turma ainda.</p>
-                ) : (
-                  participantesCurso.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between p-2.5 rounded-lg border border-zinc-200 text-sm">
-                      <div>
-                        <span className="font-semibold text-zinc-900">{p.alunoNome}</span>
-                        <span className={`ml-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          p.roleParticipante === 'bolsista' ? 'bg-cyan-100 text-cyan-800' : 'bg-zinc-100 text-zinc-700'
-                        }`}>
-                          {p.roleParticipante || 'aluno'}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => handleRemoverParticipante(p.id)}
-                        className="text-zinc-400 hover:text-red-600 p-1"
-                        title="Remover da turma"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
