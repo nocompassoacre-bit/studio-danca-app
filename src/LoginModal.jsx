@@ -1,13 +1,22 @@
 import { useState } from 'react';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-import { X, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
-import { useAuth } from './AuthContext';
+import { X, Lock, Mail, AlertCircle } from 'lucide-react';
+import { auth, db } from './firebase';
 
-const PERFIL_INFO = {
-  aluno: { titulo: 'Portal do Aluno', cor: 'border-[#800E30] text-[#E91E63]', rota: '/aluno' },
-  bolsista: { titulo: 'Portal do Bolsista', cor: 'border-[#0E5A6D] text-[#22D3EE]', rota: '/bolsista' },
-  prof: { titulo: 'Portal do Professor', cor: 'border-[#D81B60] text-[#D81B60]', rota: '/professor' },
-  admin: { titulo: 'Coordenação / Admin', cor: 'border-[#C5A059] text-[#E5C17B]', rota: '/admin' },
+const TITULOS_PERFIL = {
+  aluno: 'Área do Aluno',
+  bolsista: 'Portal do Bolsista',
+  prof: 'Área do Professor',
+  admin: 'Coordenação / Admin',
+};
+
+const ROTAS_PERFIL = {
+  aluno: '/aluno',
+  bolsista: '/bolsista',
+  prof: '/professor',
+  admin: '/admin',
 };
 
 export default function LoginModal({ perfil, onClose }) {
@@ -15,23 +24,40 @@ export default function LoginModal({ perfil, onClose }) {
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(false);
-
-  const { loginComPerfil } = useAuth();
   const navigate = useNavigate();
 
   if (!perfil) return null;
-  const info = PERFIL_INFO[perfil];
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setErro('');
     setCarregando(true);
+
     try {
-      await loginComPerfil(email, senha, perfil);
+      const cred = await signInWithEmailAndPassword(auth, email, senha);
+      const userSnap = await getDoc(doc(db, 'users', cred.user.uid));
+
+      if (!userSnap.exists()) {
+        setErro('Perfil não encontrado na base do Studio. Contate a coordenação.');
+        setCarregando(false);
+        return;
+      }
+
+      const dados = userSnap.data();
+      const listaRoles = Array.isArray(dados.roles) && dados.roles.length > 0
+        ? dados.roles
+        : [dados.role];
+
+      if (!listaRoles.includes(perfil)) {
+        setErro(`Esta conta não possui acesso liberado para ${TITULOS_PERFIL[perfil]}.`);
+        setCarregando(false);
+        return;
+      }
+
       onClose();
-      navigate(info.rota);
+      navigate(ROTAS_PERFIL[perfil]);
     } catch (err) {
-      setErro(err.message || 'E-mail ou senha inválidos.');
+      setErro('E-mail ou senha inválidos. Verifique os dados informados pela coordenação.');
     } finally {
       setCarregando(false);
     }
@@ -39,62 +65,64 @@ export default function LoginModal({ perfil, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className={`relative w-full max-w-md rounded-2xl bg-[#16161B] border ${info.cor.split(' ')[0]} p-8 shadow-2xl`}>
+      <div className="relative w-full max-w-md rounded-2xl bg-[#18181F] border border-[#C5A059]/40 p-8 shadow-2xl text-white">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white transition"
+          className="absolute right-4 top-4 text-zinc-400 hover:text-white transition"
         >
           <X size={22} />
         </button>
 
         <div className="text-center mb-6">
-          <img src="/logo-studio.png" alt="No Compasso" className="h-14 mx-auto mb-3 object-contain" />
-          <h2 className={`text-2xl font-bold uppercase tracking-wider font-condensed ${info.cor.split(' ')[1]}`}>
-            {info.titulo}
+          <span className="text-xs uppercase tracking-[0.25em] text-[#C5A059] font-semibold">
+            No Compasso Studio
+          </span>
+          <h2 className="text-3xl font-bold uppercase tracking-tight font-condensed mt-1">
+            {TITULOS_PERFIL[perfil]}
           </h2>
-          <p className="text-xs text-zinc-400 tracking-widest uppercase mt-1">
-            Insira suas credenciais de acesso
+          <p className="text-xs text-zinc-400 mt-1">
+            Acesso restrito com credenciais fornecidas pela coordenação
           </p>
         </div>
 
         {erro && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-950/70 border border-red-500/40 p-3 text-sm text-red-200">
-            <AlertCircle size={18} className="shrink-0 text-red-400" />
+          <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-950/70 border border-red-500/50 p-3 text-xs text-red-200">
+            <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-400" />
             <span>{erro}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-xs uppercase tracking-wider text-zinc-400 mb-1.5 font-semibold">
-              E-mail cadastrado
+            <label className="block text-xs uppercase tracking-wider text-zinc-400 mb-1.5">
+              E-mail Cadastrado
             </label>
             <div className="relative">
-              <Mail size={18} className="absolute left-3.5 top-3 text-zinc-500" />
+              <Mail size={16} className="absolute left-3.5 top-3.5 text-zinc-500" />
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seuemail@exemplo.com"
-                className="w-full rounded-xl bg-[#0F0F12] border border-zinc-800 pl-10 pr-4 py-2.5 text-sm text-white focus:border-[#D81B60] focus:outline-none"
+                className="w-full rounded-xl bg-[#0F0F12] border border-zinc-700 pl-10 pr-4 py-3 text-sm text-white focus:border-[#D81B60] focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs uppercase tracking-wider text-zinc-400 mb-1.5 font-semibold">
+            <label className="block text-xs uppercase tracking-wider text-zinc-400 mb-1.5">
               Senha
             </label>
             <div className="relative">
-              <Lock size={18} className="absolute left-3.5 top-3 text-zinc-500" />
+              <Lock size={16} className="absolute left-3.5 top-3.5 text-zinc-500" />
               <input
                 type="password"
                 required
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
                 placeholder="••••••••"
-                className="w-full rounded-xl bg-[#0F0F12] border border-zinc-800 pl-10 pr-4 py-2.5 text-sm text-white focus:border-[#D81B60] focus:outline-none"
+                className="w-full rounded-xl bg-[#0F0F12] border border-zinc-700 pl-10 pr-4 py-3 text-sm text-white focus:border-[#D81B60] focus:outline-none"
               />
             </div>
           </div>
@@ -102,10 +130,9 @@ export default function LoginModal({ perfil, onClose }) {
           <button
             type="submit"
             disabled={carregando}
-            className="w-full mt-2 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#5C0A24] to-[#D81B60] py-3 font-bold uppercase tracking-wider text-sm text-white hover:opacity-95 transition disabled:opacity-50"
+            className="w-full rounded-xl bg-gradient-to-r from-[#D81B60] to-[#9C1445] py-3.5 text-sm font-bold uppercase tracking-widest text-white shadow-lg hover:brightness-110 transition disabled:opacity-50"
           >
-            {carregando ? 'Verificando...' : 'Entrar no Sistema'}
-            <ArrowRight size={18} />
+            {carregando ? 'Entrando...' : 'Acessar Painel'}
           </button>
         </form>
       </div>
