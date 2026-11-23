@@ -208,6 +208,9 @@ export default function InscricaoPublica() {
         {/* ETAPA 1 E 2: DADOS E CHECKOUT DE PAGAMENTO */}
         {etapa !== 'comprovante' && (
           <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden">
+            {item.cardUrl && (
+  <img src={item.cardUrl} alt={item.titulo} className="w-full max-h-80 object-cover" />
+)}
             <div className="bg-[#4A041C] p-6 text-white">
               <span className="inline-block px-2.5 py-0.5 rounded bg-[#D81B60] text-[10px] font-bold uppercase tracking-widest mb-2">
                 {tipo === 'evento' ? 'Ingresso / Evento' : item.tipoLabel || 'Inscrição Online'}
