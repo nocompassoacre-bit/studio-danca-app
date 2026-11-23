@@ -4,12 +4,12 @@ import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import {
   UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check,
-  FolderOpen, Pencil, X, AlertTriangle, ShieldAlert
+  FolderOpen, Edit3, X, ShieldAlert, Search, Image as ImageIcon
 } from 'lucide-react';
 import { db } from './firebase';
 import CursoDetalhesAdmin from './CursoDetalhesAdmin';
 
-const MODALIDADES = [
+const MODALIDADES_CURSO = [
   { id: 'fixo', label: 'Turma Fixa (Regular)' },
   { id: 'rapido', label: 'Curso Rápido' },
   { id: 'ferias', label: 'Curso de Férias' },
@@ -18,18 +18,17 @@ const MODALIDADES = [
   { id: 'encontro', label: 'Encontro / Prática' },
 ];
 
-const PERFIS_DISPONIVEIS = [
-  { id: 'aluno', label: 'Aluno(a)', badge: 'bg-zinc-100 text-zinc-800' },
-  { id: 'bolsista', label: 'Bolsista', badge: 'bg-cyan-100 text-cyan-800' },
-  { id: 'prof', label: 'Professor(a)', badge: 'bg-pink-100 text-pink-800' },
-  { id: 'admin', label: 'Coordenação / Admin', badge: 'bg-amber-100 text-amber-800' },
+const PAPEIS_DISPONIVEIS = [
+  { id: 'aluno', label: 'Aluno(a)', cor: 'bg-zinc-100 text-zinc-800 border-zinc-300' },
+  { id: 'bolsista', label: 'Bolsista', cor: 'bg-cyan-100 text-cyan-800 border-cyan-300' },
+  { id: 'prof', label: 'Professor(a)', cor: 'bg-pink-100 text-pink-800 border-pink-300' },
+  { id: 'admin', label: 'Admin / Coord.', cor: 'bg-amber-100 text-amber-800 border-amber-300' },
 ];
 
-function calcularIdade(dataNascStr) {
-  if (!dataNascStr) return null;
+function calcularIdade(dataNasc) {
+  if (!dataNasc) return null;
   const hoje = new Date();
-  const nasc = new Date(dataNascStr + 'T00:00:00');
-  if (isNaN(nasc.getTime())) return null;
+  const nasc = new Date(dataNasc + 'T00:00:00');
   let idade = hoje.getFullYear() - nasc.getFullYear();
   const m = hoje.getMonth() - nasc.getMonth();
   if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) {
@@ -38,17 +37,42 @@ function calcularIdade(dataNascStr) {
   return idade;
 }
 
-function normalizarCpf(valor) {
+function limparCpf(valor) {
   return (valor || '').replace(/\D/g, '');
+}
+
+// Comprime e converte a imagem do Card Oficial para armazenamento direto e rápido
+function processarImagemCard(file, callback) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_WIDTH = 900;
+      const scale = img.width > MAX_WIDTH ? MAX_WIDTH / img.width : 1;
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      callback(dataUrl);
+    };
+    img.src = event.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro, recarregar }) {
   const [copiadoId, setCopiadoId] = useState(null);
   const [cursoAbertoId, setCursoAbertoId] = useState(null);
   const [filtroFrente, setFiltroFrente] = useState('todas');
+  const [buscaUsuario, setBuscaUsuario] = useState('');
 
-  // Estados para Cadastro / Edição de Usuários
-  const [editandoUserId, setEditandoUserId] = useState(null);
+  // Estado de Edição de Usuário
+  const [usuarioEditandoId, setUsuarioEditandoId] = useState(null);
+
+  // Estados para Cadastro/Edição de Usuários
   const [rolesSelecionados, setRolesSelecionados] = useState(['aluno']);
   const [frentesAluno, setFrentesAluno] = useState(['Dança de Salão']);
   const [nome, setNome] = useState('');
@@ -60,14 +84,13 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   const [endereco, setEndereco] = useState('');
   const [contatoEmergencia, setContatoEmergencia] = useState('');
 
-  // Campos para Menor de 15 anos (Responsável)
-  const [responsavelNome, setResponsavelNome] = useState('');
-  const [responsavelTipo, setResponsavelTipo] = useState('Mãe'); // 'Mãe' | 'Pai' | 'Outro'
-  const [responsavelOutroParentesco, setResponsavelOutroParentesco] = useState('');
-  const [responsavelTelefone, setResponsavelTelefone] = useState('');
-  const [responsavelEmail, setResponsavelEmail] = useState('');
+  // Estados para Menor de 15 anos
+  const [tipoResponsavel, setTipoResponsavel] = useState('Mãe');
+  const [nomeResponsavel, setNomeResponsavel] = useState('');
+  const [telefoneSecundarioAluno, setTelefoneSecundarioAluno] = useState('');
+  const [emailSecundarioAluno, setEmailSecundarioAluno] = useState('');
 
-  const [criandoUser, setCriandoUser] = useState(false);
+  const [salvandoUser, setSalvandoUser] = useState(false);
 
   // Estados para Cadastro de Cursos
   const [frente, setFrente] = useState('Dança de Salão');
@@ -82,6 +105,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   const [duracaoTotal, setDuracaoTotal] = useState('Mensal');
   const [profIdSelecionado, setProfIdSelecionado] = useState('');
   const [ementaInicial, setEmentaInicial] = useState('');
+  const [cardCursoUrl, setCardCursoUrl] = useState('');
 
   // Estados para Cadastro de Eventos
   const [tituloEvento, setTituloEvento] = useState('');
@@ -91,15 +115,17 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   const [localEvento, setLocalEvento] = useState('No Compasso Studio de Dança');
   const [valorIngresso, setValorIngresso] = useState('');
   const [descEvento, setDescEvento] = useState('');
-
-  // Lista de professores inclui quem tem 'prof' no array roles ou no campo role legado
-  const profs = usuarios.filter((u) => (u.roles ? u.roles.includes('prof') : u.role === 'prof'));
+  const [cardEventoUrl, setCardEventoUrl] = useState('');
 
   const idadeCalculada = calcularIdade(dataNascimento);
   const isMenorDe15 = idadeCalculada !== null && idadeCalculada < 15;
   const isAlunoOuBolsista = rolesSelecionados.includes('aluno') || rolesSelecionados.includes('bolsista');
 
-  const alternarRole = (roleId) => {
+  const profs = usuarios.filter((u) =>
+    Array.isArray(u.roles) ? u.roles.includes('prof') : u.role === 'prof'
+  );
+
+  const toggleRole = (roleId) => {
     setRolesSelecionados((prev) => {
       if (prev.includes(roleId)) {
         return prev.length > 1 ? prev.filter((r) => r !== roleId) : prev;
@@ -108,17 +134,14 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     });
   };
 
-  const alternarFrenteAluno = (frenteNome) => {
-    setFrentesAluno((prev) => {
-      if (prev.includes(frenteNome)) {
-        return prev.length > 1 ? prev.filter((f) => f !== frenteNome) : prev;
-      }
-      return [...prev, frenteNome];
-    });
+  const toggleFrenteAluno = (itemFrente) => {
+    setFrentesAluno((prev) =>
+      prev.includes(itemFrente) ? prev.filter((f) => f !== itemFrente) : [...prev, itemFrente]
+    );
   };
 
   const limparFormularioUsuario = () => {
-    setEditandoUserId(null);
+    setUsuarioEditandoId(null);
     setRolesSelecionados(['aluno']);
     setFrentesAluno(['Dança de Salão']);
     setNome('');
@@ -129,41 +152,39 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     setCpf('');
     setEndereco('');
     setContatoEmergencia('');
-    setResponsavelNome('');
-    setResponsavelTipo('Mãe');
-    setResponsavelOutroParentesco('');
-    setResponsavelTelefone('');
-    setResponsavelEmail('');
+    setTipoResponsavel('Mãe');
+    setNomeResponsavel('');
+    setTelefoneSecundarioAluno('');
+    setEmailSecundarioAluno('');
   };
 
   const carregarUsuarioParaEdicao = (u) => {
-    setEditandoUserId(u.id);
-    const listaRoles = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : [u.role || 'aluno'];
-    setRolesSelecionados(listaRoles);
+    setUsuarioEditandoId(u.id);
+    const papeis = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : [u.role || 'aluno'];
+    setRolesSelecionados(papeis);
     setFrentesAluno(Array.isArray(u.frentes) && u.frentes.length > 0 ? u.frentes : ['Dança de Salão']);
     setNome(u.nome || '');
     setEmail(u.email || '');
     setSenha('');
-    setTelefone(u.telefone || '');
+    setTelefone(u.telefoneRaw || u.telefone || '');
     setDataNascimento(u.dataNascimento || '');
     setCpf(u.cpf || '');
     setEndereco(u.endereco || '');
     setContatoEmergencia(u.contatoEmergencia || '');
-    setResponsavelNome(u.responsavelNome || '');
-    setResponsavelTipo(u.responsavelTipo || 'Mãe');
-    setResponsavelOutroParentesco(u.responsavelOutroParentesco || '');
-    setResponsavelTelefone(u.responsavelTelefone || '');
-    setResponsavelEmail(u.responsavelEmail || '');
+    setTipoResponsavel(u.tipoResponsavel || 'Mãe');
+    setNomeResponsavel(u.nomeResponsavel || '');
+    setTelefoneSecundarioAluno(u.telefoneSecundarioAluno || '');
+    setEmailSecundarioAluno(u.emailSecundarioAluno || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Detecta CPF duplicado e abre automaticamente o cadastro existente em modo edição
   const handleCpfChange = (valorDigitado) => {
     setCpf(valorDigitado);
-    const limpo = normalizarCpf(valorDigitado);
-    if (limpo.length === 11 && !editandoUserId) {
-      const existente = usuarios.find((u) => normalizarCpf(u.cpf) === limpo);
+    const limpo = limparCpf(valorDigitado);
+    if (limpo.length === 11 && !usuarioEditandoId) {
+      const existente = usuarios.find((u) => limparCpf(u.cpf) === limpo);
       if (existente) {
-        alert(`CPF já cadastrado para ${existente.nome}! Abrindo a ficha em modo de edição.`);
+        alert(`CPF já cadastrado para "${existente.nome}". Abrindo cadastro em modo de edição!`);
         carregarUsuarioParaEdicao(existente);
       }
     }
@@ -171,52 +192,56 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
 
   const handleSalvarUsuario = async (e) => {
     e.preventDefault();
-    setCriandoUser(true);
+    setSalvandoUser(true);
 
-    // Define a role principal para compatibilidade e mantém o array completo 'roles'
-    const prioridade = ['admin', 'prof', 'bolsista', 'aluno'];
-    const rolePrincipal = prioridade.find((r) => rolesSelecionados.includes(r)) || 'aluno';
+    const rotuloResp = `${tipoResponsavel}${nomeResponsavel ? ` - ${nomeResponsavel}` : ''}`;
+    const telefoneFormatado = isMenorDe15
+      ? `${telefone} (${rotuloResp})${telefoneSecundarioAluno ? ` | ${telefoneSecundarioAluno} (Aluno)` : ''}`
+      : telefone;
 
-    // Se for menor de 15 anos, o contato principal e e-mail assumem os do responsável
-    const emailFinal = isMenorDe15 && responsavelEmail ? responsavelEmail : email;
-    const telefoneFinal = isMenorDe15 && responsavelTelefone ? responsavelTelefone : telefone;
+    const emailFormatadoExibicao = isMenorDe15
+      ? `${email} (${rotuloResp})${emailSecundarioAluno ? ` | ${emailSecundarioAluno} (Aluno)` : ''}`
+      : email;
 
-    const responsavelFormatado = isMenorDe15
-      ? `${responsavelNome} (${responsavelTipo === 'Outro' ? responsavelOutroParentesco || 'Responsável' : responsavelTipo})`
-      : '';
+    const rolePrincipal = rolesSelecionados.includes('admin')
+      ? 'admin'
+      : rolesSelecionados.includes('prof')
+      ? 'prof'
+      : rolesSelecionados.includes('bolsista')
+      ? 'bolsista'
+      : 'aluno';
 
-    const dadosPayload = {
+    const payloadDados = {
       nome,
-      email: emailFinal,
-      telefone: telefoneFinal,
-      dataNascimento,
+      email,
+      emailExibicao: emailFormatadoExibicao,
+      telefone: telefoneFormatado,
+      telefoneRaw: telefone,
+      dataNascimento: isAlunoOuBolsista ? dataNascimento : '',
+      isMenorDe15: isAlunoOuBolsista ? isMenorDe15 : false,
+      tipoResponsavel: isMenorDe15 ? tipoResponsavel : '',
+      nomeResponsavel: isMenorDe15 ? nomeResponsavel : '',
+      telefoneSecundarioAluno: isMenorDe15 ? telefoneSecundarioAluno : '',
+      emailSecundarioAluno: isMenorDe15 ? emailSecundarioAluno : '',
       cpf,
-      endereco,
-      contatoEmergencia,
+      endereco: isAlunoOuBolsista ? endereco : '',
+      contatoEmergencia: isAlunoOuBolsista ? contatoEmergencia : '',
+      frentes: isAlunoOuBolsista ? frentesAluno : [],
       role: rolePrincipal,
       roles: rolesSelecionados,
-      frentes: isAlunoOuBolsista ? frentesAluno : [],
-      menorDe15: isMenorDe15,
-      responsavelNome: isMenorDe15 ? responsavelNome : '',
-      responsavelTipo: isMenorDe15 ? responsavelTipo : '',
-      responsavelOutroParentesco: isMenorDe15 && responsavelTipo === 'Outro' ? responsavelOutroParentesco : '',
-      responsavelFormatado,
-      responsavelTelefone: isMenorDe15 ? responsavelTelefone : '',
-      responsavelEmail: isMenorDe15 ? responsavelEmail : '',
+      status: 'ativo',
     };
 
     try {
-      if (editandoUserId) {
-        // MODO EDIÇÃO DE CADASTRO EXISTENTE
-        await updateDoc(doc(db, 'users', editandoUserId), {
-          ...dadosPayload,
+      if (usuarioEditandoId) {
+        await updateDoc(doc(db, 'users', usuarioEditandoId), {
+          ...payloadDados,
           atualizadoEm: new Date().toISOString(),
         });
         alert('Cadastro atualizado com sucesso!');
         limparFormularioUsuario();
         recarregar();
       } else {
-        // NOVO CADASTRO COM LOGIN NO FIREBASE AUTH
         let secondaryApp;
         try {
           const config = {
@@ -226,12 +251,11 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
           };
           secondaryApp = initializeApp(config, 'SecondaryApp_' + Date.now());
           const secondaryAuth = getAuth(secondaryApp);
-          const cred = await createUserWithEmailAndPassword(secondaryAuth, emailFinal, senha);
+          const cred = await createUserWithEmailAndPassword(secondaryAuth, email, senha);
 
           await setDoc(doc(db, 'users', cred.user.uid), {
             uid: cred.user.uid,
-            ...dadosPayload,
-            status: 'ativo',
+            ...payloadDados,
             criadoEm: new Date().toISOString(),
           });
 
@@ -245,7 +269,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     } catch (err) {
       alert('Erro ao salvar usuário: ' + err.message);
     } finally {
-      setCriandoUser(false);
+      setSalvandoUser(false);
     }
   };
 
@@ -253,7 +277,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     if (!window.confirm(`Deseja realmente excluir ${u.nome} do sistema?`)) return;
     try {
       await deleteDoc(doc(db, 'users', u.id));
-      if (editandoUserId === u.id) limparFormularioUsuario();
+      if (usuarioEditandoId === u.id) limparFormularioUsuario();
       recarregar();
     } catch (err) {
       alert('Erro ao excluir: ' + err.message);
@@ -270,7 +294,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   const handleCriarCurso = async (e) => {
     e.preventDefault();
     const profObj = profs.find((p) => p.id === profIdSelecionado);
-    const modObj = MODALIDADES.find((m) => m.id === tipoCurso);
+    const modObj = MODALIDADES_CURSO.find((m) => m.id === tipoCurso);
     try {
       await addDoc(collection(db, 'cursos'), {
         frente,
@@ -287,6 +311,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
         profId: profIdSelecionado,
         professoresNomes: profObj ? profObj.nome : 'Equipe No Compasso',
         ementa: ementaInicial,
+        cardUrl: cardCursoUrl,
         inscricaoAberta: true,
         ativo: true,
         criadoEm: new Date().toISOString(),
@@ -295,6 +320,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
       setValorCurso('');
       setDataInfo('');
       setEmentaInicial('');
+      setCardCursoUrl('');
       alert('Curso lançado com sucesso!');
       recarregar();
     } catch (err) {
@@ -318,6 +344,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
         local: localEvento,
         valorIngresso: Number(valorIngresso || 0),
         descricao: descEvento,
+        cardUrl: cardEventoUrl,
         inscricaoAberta: true,
         criadoEm: new Date().toISOString(),
       });
@@ -325,6 +352,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
       setDataEvento('');
       setValorIngresso('');
       setDescEvento('');
+      setCardEventoUrl('');
       alert('Evento publicado!');
       recarregar();
     } catch (err) {
@@ -332,49 +360,62 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     }
   };
 
-  // ABA 1: USUÁRIOS (Multi-perfis + Modalidade + Menor de 15 anos + Edição por CPF)
+  // =========================================================================
+  // ABA 1: ALUNOS, BOLSISTAS & PROFS
+  // =========================================================================
   if (aba === 'usuarios') {
+    const usuariosFiltrados = usuarios.filter((u) => {
+      const termo = buscaUsuario.toLowerCase();
+      return (
+        (u.nome || '').toLowerCase().includes(termo) ||
+        (u.cpf || '').includes(termo) ||
+        (u.email || '').toLowerCase().includes(termo)
+      );
+    });
+
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className={`p-6 rounded-2xl border shadow-sm h-fit transition ${
-          editandoUserId ? 'bg-amber-50/40 border-amber-400' : 'bg-white border-zinc-200'
+          usuarioEditandoId
+            ? 'bg-amber-50/60 border-amber-400'
+            : 'bg-white border-zinc-200'
         }`}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2 text-[#4A041C]">
-              {editandoUserId ? <Pencil size={19} className="text-amber-600" /> : <UserPlus size={20} />}
+              {usuarioEditandoId ? <Edit3 size={20} className="text-amber-700" /> : <UserPlus size={20} />}
               <h3 className="text-lg font-bold uppercase font-condensed">
-                {editandoUserId ? 'Editar Cadastro / Matrícula' : 'Cadastrar Usuário'}
+                {usuarioEditandoId ? 'Editar Cadastro / Matrícula' : 'Cadastrar Pessoa'}
               </h3>
             </div>
-            {editandoUserId && (
+
+            {usuarioEditandoId && (
               <button
                 type="button"
                 onClick={limparFormularioUsuario}
-                className="flex items-center gap-1 text-xs font-bold text-zinc-500 hover:text-zinc-900 bg-white px-2.5 py-1 rounded-lg border border-zinc-300"
+                className="flex items-center gap-1 rounded-lg bg-zinc-200 px-2.5 py-1 text-[11px] font-bold text-zinc-700 hover:bg-zinc-300"
               >
-                <X size={14} /> Cancelar
+                <X size={13} /> Cancelar Edição
               </button>
             )}
           </div>
 
           <form onSubmit={handleSalvarUsuario} className="space-y-3">
-            {/* Múltiplos Perfis / Rótulos */}
             <div>
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
-                Perfis / Classificações (pode marcar mais de um)
+                Classificações / Rótulos (Pode marcar mais de um)
               </label>
               <div className="grid grid-cols-2 gap-1.5">
-                {PERFIS_DISPONIVEIS.map((p) => {
+                {PAPEIS_DISPONIVEIS.map((p) => {
                   const marcado = rolesSelecionados.includes(p.id);
                   return (
                     <button
                       type="button"
                       key={p.id}
-                      onClick={() => alternarRole(p.id)}
+                      onClick={() => toggleRole(p.id)}
                       className={`py-2 px-2.5 rounded-xl text-xs font-bold border text-left flex items-center justify-between transition ${
                         marcado
                           ? 'bg-[#4A041C] text-white border-[#4A041C]'
-                          : 'bg-zinc-50 text-zinc-600 border-zinc-300 hover:bg-zinc-100'
+                          : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'
                       }`}
                     >
                       <span>{p.label}</span>
@@ -385,24 +426,23 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               </div>
             </div>
 
-            {/* Modalidade (Dança de Salão / Ballet) para Alunos e Bolsistas */}
             {isAlunoOuBolsista && (
               <div>
-                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
-                  Modalidade(s) de Interesse
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                  Modalidade de Interesse
                 </label>
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-2 gap-2">
                   {['Dança de Salão', 'Ballet'].map((mod) => {
                     const ativo = frentesAluno.includes(mod);
                     return (
                       <button
                         type="button"
                         key={mod}
-                        onClick={() => alternarFrenteAluno(mod)}
+                        onClick={() => toggleFrenteAluno(mod)}
                         className={`py-2 px-3 rounded-xl text-xs font-bold uppercase border transition ${
                           ativo
                             ? 'bg-[#D81B60] text-white border-[#D81B60]'
-                            : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'
+                            : 'bg-white text-zinc-600 border-zinc-300'
                         }`}
                       >
                         {mod}
@@ -414,12 +454,12 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
             )}
 
             <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">CPF</label>
+              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">CPF (Busca automática)</label>
               <input
                 type="text"
                 value={cpf}
                 onChange={(e) => handleCpfChange(e.target.value)}
-                placeholder="000.000.000-00 (busca automática)"
+                placeholder="000.000.000-00"
                 className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
               />
             </div>
@@ -435,19 +475,116 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            {isAlunoOuBolsista && (
               <div>
-                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data Nascimento</label>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data de Nascimento</label>
                 <input
                   type="date"
-                  required={isAlunoOuBolsista}
+                  required
                   value={dataNascimento}
                   onChange={(e) => setDataNascimento(e.target.value)}
                   className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
                 />
+                {idadeCalculada !== null && (
+                  <span className={`inline-block mt-1 text-[11px] font-bold ${
+                    isMenorDe15 ? 'text-amber-700' : 'text-zinc-500'
+                  }`}>
+                    Idade: {idadeCalculada} anos {isMenorDe15 ? '— Requer Responsável Legal' : ''}
+                  </span>
+                )}
               </div>
+            )}
 
-              {!isMenorDe15 && (
+            {isMenorDe15 && (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2.5">
+                <p className="text-xs font-bold uppercase text-amber-900 flex items-center gap-1.5">
+                  <ShieldAlert size={15} /> Dados do Responsável (Menor de 15 anos)
+                </p>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">Vínculo</label>
+                    <select
+                      value={tipoResponsavel}
+                      onChange={(e) => setTipoResponsavel(e.target.value)}
+                      className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs font-semibold"
+                    >
+                      <option value="Mãe">Mãe</option>
+                      <option value="Pai">Pai</option>
+                      <option value="Outro">Outro</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">Nome do Responsável</label>
+                    <input
+                      type="text"
+                      required
+                      value={nomeResponsavel}
+                      onChange={(e) => setNomeResponsavel(e.target.value)}
+                      placeholder="Nome do pai/mãe"
+                      className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
+                    WhatsApp do Responsável (Principal)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={telefone}
+                    onChange={(e) => setTelefone(e.target.value)}
+                    placeholder="(68) 99999-9999"
+                    className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
+                    E-mail do Responsável (Login Principal)
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
+                  />
+                </div>
+
+                <div className="pt-1 border-t border-amber-200/80 grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">
+                      WhatsApp do Aluno (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={telefoneSecundarioAluno}
+                      onChange={(e) => setTelefoneSecundarioAluno(e.target.value)}
+                      placeholder="Será salvo (Aluno)"
+                      className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">
+                      E-mail do Aluno (Opcional)
+                    </label>
+                    <input
+                      type="email"
+                      value={emailSecundarioAluno}
+                      onChange={(e) => setEmailSecundarioAluno(e.target.value)}
+                      placeholder="Será salvo (Aluno)"
+                      className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!isMenorDe15 && (
+              <>
                 <div>
                   <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">WhatsApp</label>
                   <input
@@ -459,119 +596,49 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
                     className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
                   />
                 </div>
-              )}
-            </div>
-
-            {/* BLOCO AUTOMÁTICO PARA MENOR DE 15 ANOS */}
-            {isMenorDe15 && (
-              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2.5">
-                <p className="text-xs font-bold uppercase text-amber-900 flex items-center gap-1.5">
-                  <ShieldAlert size={15} /> Menor de 15 anos ({idadeCalculada} anos) — Dados do Responsável
-                </p>
 
                 <div>
-                  <label className="block text-[11px] font-bold uppercase text-amber-900 mb-1">Parentesco</label>
-                  <select
-                    value={responsavelTipo}
-                    onChange={(e) => setResponsavelTipo(e.target.value)}
-                    className="w-full rounded-lg border border-amber-300 bg-white p-2 text-xs font-semibold text-zinc-900"
-                  >
-                    <option value="Mãe">Mãe</option>
-                    <option value="Pai">Pai</option>
-                    <option value="Outro">Outro Responsável</option>
-                  </select>
-                </div>
-
-                {responsavelTipo === 'Outro' && (
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase text-amber-900 mb-1">
-                      Qual parentesco? (aparecerá entre parênteses)
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Avó, Tia, Tutor Legal..."
-                      value={responsavelOutroParentesco}
-                      onChange={(e) => setResponsavelOutroParentesco(e.target.value)}
-                      className="w-full rounded-lg border border-amber-300 bg-white p-2 text-xs text-zinc-900"
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-[11px] font-bold uppercase text-amber-900 mb-1">Nome do Responsável</label>
-                  <input
-                    type="text"
-                    required
-                    value={responsavelNome}
-                    onChange={(e) => setResponsavelNome(e.target.value)}
-                    className="w-full rounded-lg border border-amber-300 bg-white p-2 text-xs text-zinc-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold uppercase text-amber-900 mb-1">WhatsApp do Responsável</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="(68) 99999-9999"
-                    value={responsavelTelefone}
-                    onChange={(e) => setResponsavelTelefone(e.target.value)}
-                    className="w-full rounded-lg border border-amber-300 bg-white p-2 text-xs text-zinc-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold uppercase text-amber-900 mb-1">E-mail do Responsável (Login)</label>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">E-mail de Login</label>
                   <input
                     type="email"
                     required
-                    value={responsavelEmail}
-                    onChange={(e) => setResponsavelEmail(e.target.value)}
-                    className="w-full rounded-lg border border-amber-300 bg-white p-2 text-xs text-zinc-900"
+                    disabled={Boolean(usuarioEditandoId)}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900 disabled:bg-zinc-100"
                   />
                 </div>
-              </div>
+              </>
             )}
 
-            <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Endereço Completo</label>
-              <input
-                type="text"
-                required={isAlunoOuBolsista}
-                value={endereco}
-                onChange={(e) => setEndereco(e.target.value)}
-                placeholder="Rua, Número, Bairro - Rio Branco/AC"
-                className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
-              />
-            </div>
+            {isAlunoOuBolsista && (
+              <>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Endereço Completo</label>
+                  <input
+                    type="text"
+                    required
+                    value={endereco}
+                    onChange={(e) => setEndereco(e.target.value)}
+                    placeholder="Rua, Número, Bairro - Rio Branco/AC"
+                    className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
+                  />
+                </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Contato de Emergência</label>
-              <input
-                type="text"
-                value={contatoEmergencia}
-                onChange={(e) => setContatoEmergencia(e.target.value)}
-                placeholder="Nome e Telefone"
-                className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
-              />
-            </div>
-
-            {!isMenorDe15 && (
-              <div>
-                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">E-mail de Login</label>
-                <input
-                  type="email"
-                  required
-                  disabled={Boolean(editandoUserId)}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900 disabled:bg-zinc-100"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Contato de Emergência</label>
+                  <input
+                    type="text"
+                    value={contatoEmergencia}
+                    onChange={(e) => setContatoEmergencia(e.target.value)}
+                    placeholder="Nome e Telefone"
+                    className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
+                  />
+                </div>
+              </>
             )}
 
-            {!editandoUserId && (
+            {!usuarioEditandoId && (
               <div>
                 <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Senha Inicial (mín. 6 dígitos)</label>
                 <input
@@ -587,47 +654,61 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
 
             <button
               type="submit"
-              disabled={criandoUser}
+              disabled={salvandoUser}
               className={`w-full rounded-xl py-3 text-xs font-bold uppercase tracking-wider text-white transition ${
-                editandoUserId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-[#D81B60] hover:bg-[#AD1457]'
+                usuarioEditandoId
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-[#D81B60] hover:bg-[#AD1457]'
               }`}
             >
-              {criandoUser
+              {salvandoUser
                 ? 'Salvando...'
-                : editandoUserId
-                ? 'Salvar Alterações da Matrícula'
+                : usuarioEditandoId
+                ? 'Salvar Alterações no Cadastro'
                 : 'Criar Acesso com Senha'}
             </button>
           </form>
         </div>
 
-        {/* TABELA DE USUÁRIOS COM TODOS OS RÓTULOS E BOTÃO EDITAR */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
-          <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900 mb-4">
-            Base de Usuários ({usuarios.length})
-          </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900">
+              Base de Usuários ({usuariosFiltrados.length})
+            </h3>
+
+            <div className="relative w-full sm:w-64">
+              <Search size={15} className="absolute left-3 top-3 text-zinc-400" />
+              <input
+                type="text"
+                value={buscaUsuario}
+                onChange={(e) => setBuscaUsuario(e.target.value)}
+                placeholder="Buscar nome, CPF ou e-mail..."
+                className="w-full rounded-xl border border-zinc-300 pl-9 pr-3 py-2 text-xs text-zinc-900"
+              />
+            </div>
+          </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
-                  <th className="py-3 px-2">Nome / Modalidade / Endereço</th>
-                  <th className="py-3 px-2">Classificações (Rótulos)</th>
-                  <th className="py-3 px-2">Contato / Responsável</th>
+                  <th className="py-3 px-2">Nome / Modalidade</th>
+                  <th className="py-3 px-2">Rótulos</th>
+                  <th className="py-3 px-2">Contato / Nasc.</th>
                   <th className="py-3 px-2 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {usuarios.map((u) => {
-                  const userRoles = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : [u.role || 'aluno'];
+                {usuariosFiltrados.map((u) => {
+                  const listaPapeis = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : [u.role || 'aluno'];
                   return (
-                    <tr key={u.id} className={`hover:bg-zinc-50 ${editandoUserId === u.id ? 'bg-amber-50/70' : ''}`}>
+                    <tr key={u.id} className="hover:bg-zinc-50">
                       <td className="py-3 px-2">
                         <p className="font-semibold text-zinc-900">{u.nome}</p>
-                        <p className="text-xs text-zinc-500">{u.email} {u.cpf ? `• CPF: ${u.cpf}` : ''}</p>
+                        <p className="text-xs text-zinc-500">{u.emailExibicao || u.email}</p>
                         {Array.isArray(u.frentes) && u.frentes.length > 0 && (
-                          <p className="text-[11px] font-bold text-[#D81B60] mt-0.5">
-                            {u.frentes.join(' + ')}
+                          <p className="text-[11px] font-semibold text-[#D81B60] mt-0.5">
+                            {u.frentes.join(' • ')}
                           </p>
                         )}
                         {u.endereco && <p className="text-[11px] text-zinc-400">{u.endereco}</p>}
@@ -635,16 +716,16 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
 
                       <td className="py-3 px-2">
                         <div className="flex flex-wrap gap-1">
-                          {userRoles.map((r) => {
-                            const info = PERFIS_DISPONIVEIS.find((p) => p.id === r);
+                          {listaPapeis.map((r) => {
+                            const info = PAPEIS_DISPONIVEIS.find((p) => p.id === r);
                             return (
                               <span
                                 key={r}
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                  info ? info.badge : 'bg-zinc-100 text-zinc-800'
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                                  info ? info.cor : 'bg-zinc-100 text-zinc-800'
                                 }`}
                               >
-                                {r}
+                                {info ? info.label : r}
                               </span>
                             );
                           })}
@@ -654,20 +735,16 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
                       <td className="py-3 px-2 text-xs text-zinc-600">
                         <p>{u.telefone || '—'}</p>
                         {u.dataNascimento && <p className="text-zinc-400">Nasc: {u.dataNascimento}</p>}
-                        {u.responsavelFormatado && (
-                          <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded mt-1">
-                            Resp: {u.responsavelFormatado}
-                          </p>
-                        )}
+                        {u.cpf && <p className="text-zinc-400 font-mono text-[11px]">CPF: {u.cpf}</p>}
                       </td>
 
-                      <td className="py-3 px-2 text-right whitespace-nowrap">
+                      <td className="py-3 px-2 text-right whitespace-nowrap space-x-1">
                         <button
                           onClick={() => carregarUsuarioParaEdicao(u)}
-                          className="text-zinc-500 hover:text-[#4A041C] p-1.5"
+                          className="text-zinc-500 hover:text-amber-600 p-1.5"
                           title="Editar cadastro"
                         >
-                          <Pencil size={16} />
+                          <Edit3 size={16} />
                         </button>
                         <button
                           onClick={() => handleExcluirUsuario(u)}
@@ -688,7 +765,9 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     );
   }
 
-  // ABA 2: CURSOS & TURMAS
+  // =========================================================================
+  // ABA 2: CURSOS & TURMAS (Com Upload do Card Oficial)
+  // =========================================================================
   if (aba === 'cursos') {
     const cursoDetalhe = cursos.find((c) => c.id === cursoAbertoId);
     if (cursoDetalhe) {
@@ -746,7 +825,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
                 onChange={(e) => setTipoCurso(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
               >
-                {MODALIDADES.map((m) => (
+                {MODALIDADES_CURSO.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
@@ -764,13 +843,45 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               />
             </div>
 
+            {/* UPLOAD DO CARD OFICIAL DO CURSO */}
+            <div>
+              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                Card Oficial do Curso (Arte / Banner)
+              </label>
+              <label className="flex flex-col items-center justify-center w-full p-3 border-2 border-dashed border-zinc-300 rounded-xl cursor-pointer bg-zinc-50 hover:bg-pink-50/40 hover:border-[#D81B60] transition">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#4A041C]">
+                  <ImageIcon size={16} className="text-[#D81B60]" />
+                  <span>{cardCursoUrl ? 'Trocar Imagem do Card' : 'Selecionar Arte do Card (JPG/PNG)'}</span>
+                </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => processarImagemCard(e.target.files[0], setCardCursoUrl)}
+                />
+              </label>
+
+              {cardCursoUrl && (
+                <div className="relative mt-2 rounded-xl overflow-hidden border border-zinc-200">
+                  <img src={cardCursoUrl} alt="Prévia do Card" className="w-full h-36 object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setCardCursoUrl('')}
+                    className="absolute top-2 right-2 bg-black/70 text-white p-1 rounded-full hover:bg-red-600"
+                    title="Remover imagem"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Estilo / Nível</label>
                 <input
                   type="text"
                   required
-                  placeholder={frente === 'Ballet' ? 'Clássico, Baby...' : 'Forró, Bolero...'}
                   value={estilo}
                   onChange={(e) => setEstilo(e.target.value)}
                   className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
@@ -904,21 +1015,30 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
           <div className="space-y-3">
             {cursosFiltrados.map((c) => (
               <div key={c.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 bg-zinc-50 hover:border-[#4A041C]/40 transition">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-2 py-0.5 rounded bg-[#4A041C] text-white text-[10px] font-bold uppercase">
-                      {c.frente || 'Dança de Salão'}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                      c.tipo === 'fixo' ? 'bg-zinc-800 text-white' : 'bg-[#D81B60] text-white'
-                    }`}>
-                      {c.tipoLabel || c.tipo}
-                    </span>
-                    <h4 className="font-bold text-zinc-900">{c.titulo}</h4>
+                <div className="flex items-center gap-3.5">
+                  {c.cardUrl && (
+                    <img
+                      src={c.cardUrl}
+                      alt={c.titulo}
+                      className="w-16 h-16 rounded-xl object-cover border border-zinc-300 shrink-0"
+                    />
+                  )}
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-[#4A041C] text-white text-[10px] font-bold uppercase">
+                        {c.frente || 'Dança de Salão'}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        c.tipo === 'fixo' ? 'bg-zinc-800 text-white' : 'bg-[#D81B60] text-white'
+                      }`}>
+                        {c.tipoLabel || c.tipo}
+                      </span>
+                      <h4 className="font-bold text-zinc-900">{c.titulo}</h4>
+                    </div>
+                    <p className="text-xs text-zinc-600 mt-1">
+                      {c.estilo} • Prof: <strong>{c.professoresNomes}</strong> • {c.dataInfo} ({c.horaInicio || '19:00'} às {c.horarioFim || '21:00'}) • <strong>R$ {c.valor}</strong>
+                    </p>
                   </div>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    {c.estilo} • Prof: <strong>{c.professoresNomes}</strong> • {c.dataInfo} ({c.horaInicio || '19:00'} às {c.horarioFim || '21:00'}) • <strong>R$ {c.valor}</strong>
-                  </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -957,7 +1077,9 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     );
   }
 
-  // ABA 3: EVENTOS
+  // =========================================================================
+  // ABA 3: EVENTOS (Com Upload do Card Oficial do Evento)
+  // =========================================================================
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
@@ -977,6 +1099,39 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
             />
           </div>
+
+          {/* UPLOAD DO CARD OFICIAL DO EVENTO */}
+          <div>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+              Card Oficial do Evento (Flyer / Cartaz)
+            </label>
+            <label className="flex flex-col items-center justify-center w-full p-3 border-2 border-dashed border-zinc-300 rounded-xl cursor-pointer bg-zinc-50 hover:bg-pink-50/40 hover:border-[#D81B60] transition">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#4A041C]">
+                <ImageIcon size={16} className="text-[#D81B60]" />
+                <span>{cardEventoUrl ? 'Trocar Cartaz do Evento' : 'Selecionar Arte do Evento (JPG/PNG)'}</span>
+              </div>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => processarImagemCard(e.target.files[0], setCardEventoUrl)}
+              />
+            </label>
+
+            {cardEventoUrl && (
+              <div className="relative mt-2 rounded-xl overflow-hidden border border-zinc-200">
+                <img src={cardEventoUrl} alt="Prévia do Evento" className="w-full h-36 object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setCardEventoUrl('')}
+                  className="absolute top-2 right-2 bg-black/70 text-white p-1 rounded-full hover:bg-red-600"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data</label>
             <input
@@ -1053,13 +1208,22 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
         <div className="space-y-3">
           {eventos.map((ev) => (
             <div key={ev.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-zinc-200 bg-zinc-50">
-              <div>
-                <h4 className="font-bold text-zinc-900 flex items-center gap-2">
-                  <Calendar size={16} className="text-[#D81B60]" /> {ev.titulo}
-                </h4>
-                <p className="text-xs text-zinc-600 mt-1">
-                  {ev.data} ({ev.horaInicio} às {ev.horaFim}) • {ev.local} • Ingresso: R$ {ev.valorIngresso}
-                </p>
+              <div className="flex items-center gap-3.5">
+                {ev.cardUrl && (
+                  <img
+                    src={ev.cardUrl}
+                    alt={ev.titulo}
+                    className="w-16 h-16 rounded-xl object-cover border border-zinc-300 shrink-0"
+                  />
+                )}
+                <div>
+                  <h4 className="font-bold text-zinc-900 flex items-center gap-2">
+                    <Calendar size={16} className="text-[#D81B60]" /> {ev.titulo}
+                  </h4>
+                  <p className="text-xs text-zinc-600 mt-1">
+                    {ev.data} ({ev.horaInicio} às {ev.horaFim}) • {ev.local} • Ingresso: R$ {ev.valorIngresso}
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
