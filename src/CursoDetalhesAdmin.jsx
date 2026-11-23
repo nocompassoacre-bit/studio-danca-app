@@ -2,12 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import {
   addDoc, collection, deleteDoc, doc, getDocs, query, updateDoc, where
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   ArrowLeft, Users, FileText, BookOpen, Mail,
   CheckCircle2, Clock, Trash2, UserPlus, Save, Plus,
   Bold, Italic, Underline, Link2, Paperclip, Smile, Send, Eye, X, Image as ImageIcon
 } from 'lucide-react';
-import { db } from './firebase';
+import { db, storage } from './firebase';
 
 const EMOJIS_RAPIDOS = [
   '💃', '🕺', '🎶', '✨', '🔥', '❤️', '👏', '📅',
@@ -20,17 +21,21 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   const [planos, setPlanos] = useState([]);
   const [carregando, setCarregando] = useState(true);
 
+  // Adicionar participante
   const [usuarioAddId, setUsuarioAddId] = useState('');
   const [statusFinAdd, setStatusFinAdd] = useState('bolsista_isento');
 
+  // Edição de Ementa e Professor
   const [ementa, setEmenta] = useState(curso.ementa || '');
   const [profId, setProfId] = useState(curso.profId || '');
   const [salvandoEmenta, setSalvandoEmenta] = useState(false);
 
+  // Novo Plano de Aula
   const [tipoPlano, setTipoPlano] = useState('turma');
   const [tituloPlano, setTituloPlano] = useState('');
   const [conteudoPlano, setConteudoPlano] = useState('');
 
+  // Estados do Editor de E-mail em Massa (Brevo + Storage)
   const textoPadraoEmail = `<p>Tudo bem? Passando para compartilhar informações importantes sobre a nossa turma de <strong>${curso.titulo}</strong>.</p><p><br></p><p>📅 <strong>Dias:</strong> ${curso.dataInfo}<br>⏰ <strong>Horário:</strong> ${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'}</p><p><br></p><p>Qualquer dúvida, estamos à disposição! Nos vemos na pista! 💃🕺</p>`;
 
   const [assuntoEmail, setAssuntoEmail] = useState(`✨ Comunicado Oficial: ${curso.titulo} — No Compasso Studio`);
@@ -38,6 +43,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   const [anexosEmail, setAnexosEmail] = useState([]);
   const [destinatariosSelecionados, setDestinatariosSelecionados] = useState([]);
   const [enviandoEmails, setEnviandoEmails] = useState(false);
+  const [subindoImagem, setSubindoImagem] = useState(false);
   const [progressoEnvio, setProgressoEnvio] = useState('');
   const editorRef = useRef(null);
 
@@ -71,7 +77,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     carregarDadosTurma();
   }, [curso.id]);
 
-  // Preenche o editor apenas ao abrir a aba de e-mail (evita cursor pulando ao digitar)
+  // Inicializa o conteúdo do editor apenas ao abrir a aba de e-mail (mantém cursor estável)
   useEffect(() => {
     if (subAba === 'email' && editorRef.current) {
       editorRef.current.innerHTML = htmlCorpoEmail;
@@ -117,6 +123,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     { pago: 0, aPagar: 0 }
   );
 
+  // =========================================================================
+  // FUNÇÕES DO EDITOR RICO (TEXTO, LINKS, EMOJIS, IMAGENS STORAGE E ANEXOS)
+  // =========================================================================
   const aplicarComandoEditor = (comando, valor = null) => {
     document.execCommand(comando, false, valor);
     if (editorRef.current) {
@@ -139,34 +148,32 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
-  const handleInserirImagemNoCorpo = (e) => {
+  // Envia imagem para o Firebase Storage e insere URL pública no corpo do e-mail
+  const handleInserirImagemNoCorpo = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_W = 540;
-        const scale = img.width > MAX_W ? MAX_W / img.width : 1;
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    setSubindoImagem(true);
+    try {
+      const nomeLimpo = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const caminhoStorage = `comunicados/${curso.id}_${Date.now()}_${nomeLimpo}`;
+      const storageRef = ref(storage, caminhoStorage);
 
-        if (editorRef.current) {
-          editorRef.current.focus();
-          const imgTag = `<div style="margin:14px 0;text-align:center;"><img src="${dataUrl}" alt="Imagem" style="max-width:100%;border-radius:12px;border:1px solid #e4e4e7;" /></div><p><br></p>`;
-          document.execCommand('insertHTML', false, imgTag);
-          setHtmlCorpoEmail(editorRef.current.innerHTML);
-        }
-      };
-      img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+      await uploadBytes(storageRef, file);
+      const urlPublica = await getDownloadURL(storageRef);
+
+      if (editorRef.current) {
+        editorRef.current.focus();
+        const imgTag = `<div style="margin:14px 0;text-align:center;"><img src="${urlPublica}" alt="No Compasso Studio" style="max-width:100%;border-radius:12px;border:1px solid #e4e4e7;display:block;margin:0 auto;" /></div><p><br></p>`;
+        document.execCommand('insertHTML', false, imgTag);
+        setHtmlCorpoEmail(editorRef.current.innerHTML);
+      }
+    } catch (err) {
+      alert('Erro ao carregar imagem para o corpo do e-mail: ' + err.message);
+    } finally {
+      setSubindoImagem(false);
+      e.target.value = '';
+    }
   };
 
   const handleAnexarArquivo = (e) => {
@@ -193,6 +200,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     e.target.value = '';
   };
 
+  // =========================================================================
+  // TEMPLATE HTML INSTITUCIONAL DO NO COMPASSO STUDIO DE DANÇA
+  // =========================================================================
   const gerarTemplateHtmlCompleto = (saudacao) => {
     const logoUrlPublica = `${window.location.origin}/logo-studio.png`;
     const subtituloSelo = curso.tipoLabel || curso.tipo || 'Turma Oficial';
@@ -357,6 +367,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
+  // =========================================================================
+  // FUNÇÕES DE PARTICIPANTES, EMENTA E PLANOS
+  // =========================================================================
   const handleAdicionarParticipante = async (e) => {
     e.preventDefault();
     if (!usuarioAddId) return;
@@ -466,6 +479,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
   return (
     <div className="space-y-6">
+      {/* Cabeçalho do Curso */}
       <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
         <button
           onClick={onVoltar}
@@ -508,6 +522,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           </div>
         </div>
 
+        {/* Sub-abas */}
         <div className="flex gap-2 mt-6 pt-4 border-t border-zinc-100 overflow-x-auto">
           <button
             onClick={() => setSubAba('inscritos')}
@@ -544,6 +559,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       </div>
 
+      {/* SUB-ABA: ENVIAR E-MAIL GERAL */}
       {subAba === 'email' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
@@ -655,8 +671,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                 </button>
 
                 <label className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700 cursor-pointer">
-                  <ImageIcon size={14} className="text-emerald-700" /> Imagem no Corpo
-                  <input type="file" accept="image/*" className="hidden" onChange={handleInserirImagemNoCorpo} />
+                  <ImageIcon size={14} className="text-emerald-700" />
+                  {subindoImagem ? 'Enviando imagem...' : 'Imagem no Corpo'}
+                  <input type="file" accept="image/*" disabled={subindoImagem} className="hidden" onChange={handleInserirImagemNoCorpo} />
                 </label>
 
                 <label className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700 cursor-pointer">
@@ -717,9 +734,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
             <button
               type="button"
-              disabled={enviandoEmails}
+              disabled={enviandoEmails || subindoImagem}
               onClick={handleDispararEmailsBrevo}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4A041C] to-[#D81B60] py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-md hover:brightness-110 transition"
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4A041C] to-[#D81B60] py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-md hover:brightness-110 transition disabled:opacity-60"
             >
               <Send size={16} />
               {enviandoEmails
@@ -741,6 +758,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
+      {/* SUB-ABA: INSCRITOS */}
       {subAba === 'inscritos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
@@ -876,6 +894,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
+      {/* SUB-ABA: EMENTA E PROFESSORES */}
       {subAba === 'ementa' && (
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm max-w-3xl">
           <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C] mb-4">
@@ -921,6 +940,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
+      {/* SUB-ABA: PLANOS DE AULA */}
       {subAba === 'planos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
