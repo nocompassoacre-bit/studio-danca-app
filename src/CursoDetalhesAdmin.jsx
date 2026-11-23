@@ -199,7 +199,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   // TEMPLATE HTML TEMÁTICO DO NO COMPASSO STUDIO DE DANÇA (COM LOGO OFICIAL)
   // =========================================================================
   const gerarTemplateHtmlCompleto = (saudacao) => {
-    const logoUrlPublica = `${window.location.origin}/logo-nocompasso.png`;
+    const logoUrlPublica = `${window.location.origin}/logo-studio.png`;
 
     return `
       <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:620px;margin:0 auto;border:1px solid #e4e4e7;border-radius:20px;overflow:hidden;background:#ffffff;box-shadow:0 8px 24px rgba(74,4,28,0.08);">
