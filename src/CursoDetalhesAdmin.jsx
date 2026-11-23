@@ -20,21 +20,17 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   const [planos, setPlanos] = useState([]);
   const [carregando, setCarregando] = useState(true);
 
-  // Adicionar participante
   const [usuarioAddId, setUsuarioAddId] = useState('');
   const [statusFinAdd, setStatusFinAdd] = useState('bolsista_isento');
 
-  // Edição de Ementa e Professor
   const [ementa, setEmenta] = useState(curso.ementa || '');
   const [profId, setProfId] = useState(curso.profId || '');
   const [salvandoEmenta, setSalvandoEmenta] = useState(false);
 
-  // Novo Plano de Aula
   const [tipoPlano, setTipoPlano] = useState('turma');
   const [tituloPlano, setTituloPlano] = useState('');
   const [conteudoPlano, setConteudoPlano] = useState('');
 
-  // Estados do Editor de E-mail em Massa (Brevo)
   const [assuntoEmail, setAssuntoEmail] = useState(`✨ Comunicado Oficial: ${curso.titulo} — No Compasso Studio`);
   const [htmlCorpoEmail, setHtmlCorpoEmail] = useState(
     `<p>Tudo bem? Passando para compartilhar informações importantes sobre a nossa turma de <strong>${curso.titulo}</strong>.</p><p><br></p><p>📅 <strong>Dias:</strong> ${curso.dataInfo}<br>⏰ <strong>Horário:</strong> ${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'}</p><p><br></p><p>Qualquer dúvida, estamos à disposição! Nos vemos na pista! 💃🕺</p>`
@@ -75,7 +71,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     carregarDadosTurma();
   }, [curso.id]);
 
-  // Cruza cada matrícula com dados do usuário (por ID ou por Nome)
   const inscritosCompletos = matriculas.map((mat) => {
     const dadosUser =
       usuarios.find((u) => u.id === mat.alunoId) ||
@@ -115,9 +110,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     { pago: 0, aPagar: 0 }
   );
 
-  // =========================================================================
-  // FUNÇÕES DO EDITOR VISUAL (TEXTO, LINKS, EMOJIS, IMAGENS NO CORPO E ANEXOS)
-  // =========================================================================
   const aplicarComandoEditor = (comando, valor = null) => {
     document.execCommand(comando, false, valor);
     if (editorRef.current) {
@@ -140,7 +132,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
-  // Insere imagem otimizada diretamente DENTRO do corpo do e-mail
   const handleInserirImagemNoCorpo = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -195,19 +186,13 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     e.target.value = '';
   };
 
-  // =========================================================================
-  // TEMPLATE HTML TEMÁTICO DO NO COMPASSO STUDIO DE DANÇA (COM LOGO OFICIAL)
-  // =========================================================================
   const gerarTemplateHtmlCompleto = (saudacao) => {
     const logoUrlPublica = `${window.location.origin}/logo-studio.png`;
 
     return `
       <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:620px;margin:0 auto;border:1px solid #e4e4e7;border-radius:20px;overflow:hidden;background:#ffffff;box-shadow:0 8px 24px rgba(74,4,28,0.08);">
-        
-        <!-- Barra Dourada Superior -->
         <div style="height:5px;background:linear-gradient(90deg,#C5A059,#E5C17B,#C5A059);"></div>
 
-        <!-- Cabeçalho com Logo Oficial do Studio -->
         <div style="background:linear-gradient(135deg,#2D0210 0%,#4A041C 60%,#880E4F 100%);padding:26px 30px;color:#ffffff;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0">
             <tr>
@@ -231,7 +216,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           </table>
         </div>
 
-        <!-- Corpo da Mensagem -->
         <div style="padding:30px 30px 24px;color:#27272a;font-size:15px;line-height:1.65;">
           <div style="background:#FDF2F6;border-left:4px solid #D81B60;padding:12px 16px;border-radius:0 12px 12px 0;margin-bottom:20px;">
             <p style="margin:0;font-size:16px;color:#4A041C;">
@@ -243,7 +227,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
             ${htmlCorpoEmail}
           </div>
 
-          <!-- Cartão de Informações Rápidas da Turma -->
           <div style="margin-top:24px;padding:14px 18px;background:#FAFAFA;border:1px solid #E4E4E7;border-radius:14px;">
             <p style="margin:0 0 6px;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:1.2px;color:#880E4F;">
               💃 Detalhes da Turma
@@ -255,7 +238,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           </div>
         </div>
 
-        <!-- Rodapé Institucional -->
         <div style="background:#18181F;padding:20px 28px;text-align:center;color:#A1A1AA;font-size:12px;">
           <p style="margin:0;color:#E5C17B;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;font-size:11px;">
             No Compasso Studio de Dança
@@ -285,7 +267,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
     if (alvosComEmail.length === 0) {
       alert(
-        `Os participantes marcados (${selecionados.map((s) => s.alunoNome).join(', ')}) não possuem e-mail preenchido no cadastro. Edite o cadastro do aluno na aba "Alunos, Bolsistas & Profs" para incluir o e-mail.`
+        `Os participantes marcados (${selecionados.map((s) => s.alunoNome).join(', ')}) não possuem e-mail preenchido no cadastro.`
       );
       return;
     }
@@ -346,16 +328,20 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         enviados++;
       }
 
-      await addDoc(collection(db, 'comunicados_email'), {
-        cursoId: curso.id,
-        cursoTitulo: curso.titulo,
-        assunto: assuntoEmail,
-        corpoHtml: htmlCorpoEmail,
-        totalDestinatarios: enviados,
-        dataEnvio: new Date().toISOString(),
-      });
+      // Grava histórico no Firestore sem interromper o fluxo se a regra ainda não estiver ativa
+      try {
+        await addDoc(collection(db, 'comunicados_email'), {
+          cursoId: curso.id,
+          cursoTitulo: curso.titulo,
+          assunto: assuntoEmail,
+          totalDestinatarios: enviados,
+          dataEnvio: new Date().toISOString(),
+        });
+      } catch (logErr) {
+        console.warn('E-mails enviados, mas histórico não gravado no Firestore:', logErr);
+      }
 
-      alert(`Sucesso! ${enviados} e-mail(s) personalizados foram enviados pelo Brevo.`);
+      alert(`Sucesso! ${enviados} e-mail(s) personalizados foram enviados com sucesso!`);
     } catch (err) {
       alert('Erro no envio via Brevo: ' + err.message);
     } finally {
@@ -364,9 +350,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
-  // =========================================================================
-  // FUNÇÕES DE PARTICIPANTES, EMENTA E PLANOS
-  // =========================================================================
   const handleAdicionarParticipante = async (e) => {
     e.preventDefault();
     if (!usuarioAddId) return;
@@ -555,7 +538,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       </div>
 
-      {/* SUB-ABA: ENVIAR E-MAIL GERAL PERSONALIZADO VIA BREVO */}
       {subAba === 'email' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
@@ -568,7 +550,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
               </span>
             </div>
 
-            {/* Seleção de Destinatários */}
             <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold uppercase text-zinc-600">
@@ -630,7 +611,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
               />
             </div>
 
-            {/* Editor Rico com Imagem no Corpo, Link, Anexo e Emojis */}
             <div className="border border-zinc-300 rounded-2xl overflow-hidden">
               <div className="bg-zinc-100 px-3 py-2 border-b border-zinc-300 flex flex-wrap items-center gap-1.5">
                 <button
@@ -743,7 +723,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
             </button>
           </div>
 
-          {/* Pré-visualização com Logo do Studio */}
           <div className="lg:col-span-5 space-y-3">
             <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-zinc-500">
               <Eye size={15} className="text-[#D81B60]" /> Pré-Visualização com Logo Oficial
@@ -757,7 +736,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
-      {/* SUB-ABA: INSCRITOS */}
       {subAba === 'inscritos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
@@ -893,7 +871,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
-      {/* SUB-ABA: EMENTA E PROFESSORES */}
       {subAba === 'ementa' && (
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm max-w-3xl">
           <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C] mb-4">
@@ -939,7 +916,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
-      {/* SUB-ABA: PLANOS DE AULA */}
       {subAba === 'planos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
