@@ -5,17 +5,9 @@ import {
 import {
   ArrowLeft, Users, FileText, BookOpen, Mail,
   CheckCircle2, Clock, Trash2, UserPlus, Save, Plus,
-  Bold, Italic, Underline, Link2, Paperclip, Smile, Send, Eye, X
+  Bold, Italic, Underline, Link2, Paperclip, Smile, Send, Eye, X, Image as ImageIcon
 } from 'lucide-react';
 import { db } from './firebase';
-
-// ============================================================================
-// CONFIGURAÇÃO DO EMAILJS (Opcional para disparo 100% automático em lote)
-// Crie conta grátis em https://www.emailjs.com e preencha os 3 códigos abaixo:
-// ============================================================================
-const EMAILJS_SERVICE_ID = '';   // Ex: 'service_nocompasso'
-const EMAILJS_TEMPLATE_ID = '';  // Ex: 'template_comunicado'
-const EMAILJS_PUBLIC_KEY = '';   // Ex: 'user_xxxxxxxxxxxx'
 
 const EMOJIS_RAPIDOS = [
   '💃', '🕺', '🎶', '✨', '🔥', '❤️', '👏', '📅',
@@ -23,7 +15,7 @@ const EMOJIS_RAPIDOS = [
 ];
 
 export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVoltar, recarregarGeral }) {
-  const [subAba, setSubAba] = useState('inscritos'); // 'inscritos' | 'ementa' | 'planos' | 'email'
+  const [subAba, setSubAba] = useState('inscritos');
   const [matriculas, setMatriculas] = useState([]);
   const [planos, setPlanos] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -42,12 +34,12 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   const [tituloPlano, setTituloPlano] = useState('');
   const [conteudoPlano, setConteudoPlano] = useState('');
 
-  // Estados do Editor de E-mail em Massa
-  const [assuntoEmail, setAssuntoEmail] = useState(`Informações Importantes: ${curso.titulo} — No Compasso Studio`);
+  // Estados do Editor de E-mail em Massa (Brevo)
+  const [assuntoEmail, setAssuntoEmail] = useState(`✨ Comunicado Oficial: ${curso.titulo} — No Compasso Studio`);
   const [htmlCorpoEmail, setHtmlCorpoEmail] = useState(
     `<p>Tudo bem? Passando para compartilhar informações importantes sobre a nossa turma de <strong>${curso.titulo}</strong>.</p><p><br></p><p>📅 <strong>Dias:</strong> ${curso.dataInfo}<br>⏰ <strong>Horário:</strong> ${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'}</p><p><br></p><p>Qualquer dúvida, estamos à disposição! Nos vemos na pista! 💃🕺</p>`
   );
-  const [anexosEmail, setAnexosEmail] = useState([]); // { nome, tamanho, dataUrl }
+  const [anexosEmail, setAnexosEmail] = useState([]);
   const [destinatariosSelecionados, setDestinatariosSelecionados] = useState([]);
   const [enviandoEmails, setEnviandoEmails] = useState(false);
   const [progressoEnvio, setProgressoEnvio] = useState('');
@@ -70,7 +62,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
       ]);
       const listaMat = matSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setMatriculas(listaMat);
-      setDestinatariosSelecionados(listaMat.map((m) => m.alunoId));
+      setDestinatariosSelecionados(listaMat.map((m) => m.id));
       setPlanos(planSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (err) {
       console.error('Erro ao carregar detalhes do curso:', err);
@@ -83,9 +75,15 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     carregarDadosTurma();
   }, [curso.id]);
 
-  // Cruza cada inscrito com os lançamentos financeiros e dados cadastrais (e-mail e responsável)
+  // Cruza cada matrícula com dados do usuário (por ID ou por Nome)
   const inscritosCompletos = matriculas.map((mat) => {
-    const dadosUser = usuarios.find((u) => u.id === mat.alunoId) || {};
+    const dadosUser =
+      usuarios.find((u) => u.id === mat.alunoId) ||
+      usuarios.find((u) => (u.nome || '').toLowerCase() === (mat.alunoNome || '').toLowerCase()) ||
+      {};
+
+    const emailFinal = (dadosUser.email || mat.email || '').trim();
+
     const lancamentosAluno = financeiro.filter(
       (f) => f.cursoId === curso.id && f.alunoId === mat.alunoId && f.tipo === 'receita' && f.status !== 'estornado'
     );
@@ -95,15 +93,13 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     const pendentes = lancamentosAluno.filter((l) => l.status === 'pendente');
     const totalAPagar = pendentes.reduce((acc, l) => acc + Number(l.valor || 0), 0);
 
-    // Define saudação inteligente: se menor de 15 anos, saúda o responsável + nome do aluno
     const saudacaoPersonalizada = dadosUser.isMenorDe15 && dadosUser.nomeResponsavel
       ? `${dadosUser.nomeResponsavel} (${dadosUser.tipoResponsavel || 'Responsável'} de ${mat.alunoNome})`
       : mat.alunoNome;
 
     return {
       ...mat,
-      emailDestino: dadosUser.email || '',
-      emailSecundario: dadosUser.emailSecundarioAluno || '',
+      emailDestino: emailFinal,
       saudacaoPersonalizada,
       totalPago,
       totalAPagar,
@@ -120,7 +116,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   );
 
   // =========================================================================
-  // FUNÇÕES DO EDITOR DE E-MAIL RICO
+  // FUNÇÕES DO EDITOR VISUAL (TEXTO, LINKS, EMOJIS, IMAGENS NO CORPO E ANEXOS)
   // =========================================================================
   const aplicarComandoEditor = (comando, valor = null) => {
     document.execCommand(comando, false, valor);
@@ -144,21 +140,53 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
+  // Insere imagem otimizada diretamente DENTRO do corpo do e-mail
+  const handleInserirImagemNoCorpo = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_W = 540;
+        const scale = img.width > MAX_W ? MAX_W / img.width : 1;
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+
+        if (editorRef.current) {
+          editorRef.current.focus();
+          const imgTag = `<div style="margin:14px 0;text-align:center;"><img src="${dataUrl}" alt="Imagem" style="max-width:100%;border-radius:12px;border:1px solid #e4e4e7;" /></div><p><br></p>`;
+          document.execCommand('insertHTML', false, imgTag);
+          setHtmlCorpoEmail(editorRef.current.innerHTML);
+        }
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const handleAnexarArquivo = (e) => {
     const files = Array.from(e.target.files || []);
     files.forEach((file) => {
-      if (file.size > 3 * 1024 * 1024) {
-        alert(`O arquivo "${file.name}" excede 3MB. Prefira arquivos menores ou links do Google Drive.`);
+      if (file.size > 4 * 1024 * 1024) {
+        alert(`O arquivo "${file.name}" excede 4MB.`);
         return;
       }
       const reader = new FileReader();
       reader.onload = (ev) => {
+        const base64Puro = ev.target.result.split(',')[1];
         setAnexosEmail((prev) => [
           ...prev,
           {
             nome: file.name,
             tamanho: (file.size / 1024).toFixed(0) + ' KB',
-            dataUrl: ev.target.result,
+            base64: base64Puro,
           },
         ]);
       };
@@ -167,100 +195,172 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     e.target.value = '';
   };
 
+  // =========================================================================
+  // TEMPLATE HTML TEMÁTICO DO NO COMPASSO STUDIO DE DANÇA (COM LOGO OFICIAL)
+  // =========================================================================
   const gerarTemplateHtmlCompleto = (saudacao) => {
-    const listaAnexosHtml = anexosEmail.length > 0
-      ? `<div style="margin-top:20px;padding:12px;background:#f8f8fa;border-radius:10px;border:1px solid #e4e4e7;">
-           <strong style="font-size:12px;color:#4A041C;">📎 Anexos incluídos (${anexosEmail.length}):</strong>
-           <ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#52525b;">
-             ${anexosEmail.map((a) => `<li>${a.nome} (${a.tamanho})</li>`).join('')}
-           </ul>
-         </div>`
-      : '';
+    const logoUrlPublica = `${window.location.origin}/logo-nocompasso.png`;
 
     return `
-      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e4e4e7;border-radius:16px;overflow:hidden;background:#ffffff;">
-        <div style="background:linear-gradient(90deg,#4A041C,#D81B60);padding:22px 28px;color:#ffffff;">
-          <p style="margin:0;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#E5C17B;font-weight:bold;">
+      <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:620px;margin:0 auto;border:1px solid #e4e4e7;border-radius:20px;overflow:hidden;background:#ffffff;box-shadow:0 8px 24px rgba(74,4,28,0.08);">
+        
+        <!-- Barra Dourada Superior -->
+        <div style="height:5px;background:linear-gradient(90deg,#C5A059,#E5C17B,#C5A059);"></div>
+
+        <!-- Cabeçalho com Logo Oficial do Studio -->
+        <div style="background:linear-gradient(135deg,#2D0210 0%,#4A041C 60%,#880E4F 100%);padding:26px 30px;color:#ffffff;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td width="64" valign="middle">
+                <div style="width:54px;height:54px;border-radius:50%;background:#ffffff;padding:5px;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,0.25);">
+                  <img src="${logoUrlPublica}" alt="No Compasso" style="width:44px;height:44px;object-fit:contain;display:block;margin:0 auto;" />
+                </div>
+              </td>
+              <td style="padding-left:14px;" valign="middle">
+                <p style="margin:0;font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:#E5C17B;font-weight:bold;">
+                  NO COMPASSO STUDIO DE DANÇA
+                </p>
+                <h2 style="margin:4px 0 0;font-size:21px;letter-spacing:0.5px;text-transform:uppercase;color:#ffffff;">
+                  ${curso.titulo}
+                </h2>
+                <span style="display:inline-block;margin-top:6px;background:rgba(255,255,255,0.14);color:#FCE4EC;font-size:11px;padding:3px 10px;border-radius:99px;">
+                  🎶 ${curso.frente || 'Dança de Salão'} • ${curso.estilo}
+                </span>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Corpo da Mensagem -->
+        <div style="padding:30px 30px 24px;color:#27272a;font-size:15px;line-height:1.65;">
+          <div style="background:#FDF2F6;border-left:4px solid #D81B60;padding:12px 16px;border-radius:0 12px 12px 0;margin-bottom:20px;">
+            <p style="margin:0;font-size:16px;color:#4A041C;">
+              Olá, <strong>${saudacao}</strong>! ✨
+            </p>
+          </div>
+
+          <div style="color:#27272a;">
+            ${htmlCorpoEmail}
+          </div>
+
+          <!-- Cartão de Informações Rápidas da Turma -->
+          <div style="margin-top:24px;padding:14px 18px;background:#FAFAFA;border:1px solid #E4E4E7;border-radius:14px;">
+            <p style="margin:0 0 6px;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:1.2px;color:#880E4F;">
+              💃 Detalhes da Turma
+            </p>
+            <p style="margin:0;font-size:13px;color:#52525B;">
+              <strong>Prof(s):</strong> ${curso.professoresNomes} &nbsp;|&nbsp;
+              <strong>Dias:</strong> ${curso.dataInfo} (${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'})
+            </p>
+          </div>
+        </div>
+
+        <!-- Rodapé Institucional -->
+        <div style="background:#18181F;padding:20px 28px;text-align:center;color:#A1A1AA;font-size:12px;">
+          <p style="margin:0;color:#E5C17B;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;font-size:11px;">
             No Compasso Studio de Dança
           </p>
-          <h2 style="margin:6px 0 0;font-size:20px;text-transform:uppercase;">${curso.titulo}</h2>
-        </div>
-        <div style="padding:28px;color:#27272a;font-size:15px;line-height:1.6;">
-          <p style="font-size:16px;margin-top:0;">Olá, <strong>${saudacao}</strong>!</p>
-          <div>${htmlCorpoEmail}</div>
-          ${listaAnexosHtml}
-        </div>
-        <div style="background:#f4f4f6;padding:16px 28px;text-align:center;font-size:12px;color:#71717a;border-top:1px solid #e4e4e7;">
-          No Compasso Studio de Dança • Rio Branco - Acre<br/>
-          <em>Dança é encontro, movimento e conexão.</em>
+          <p style="margin:4px 0 0;font-size:11px;color:#D4D4D8;">
+            Estrada das Placas, 1909 • Rio Branco - Acre
+          </p>
+          <p style="margin:8px 0 0;font-style:italic;color:#F48FB1;font-size:11px;">
+            "Dança é encontro, movimento e conexão." 🕺💃
+          </p>
         </div>
       </div>
     `;
   };
 
-  const handleDispararEmailsEmMassa = async () => {
-    const alvos = inscritosCompletos.filter(
-      (i) => destinatariosSelecionados.includes(i.alunoId) && i.emailDestino
+  const handleDispararEmailsBrevo = async () => {
+    const selecionados = inscritosCompletos.filter((i) =>
+      destinatariosSelecionados.includes(i.id)
     );
 
-    if (alvos.length === 0) {
-      alert('Selecione ao menos um participante com e-mail cadastrado.');
+    if (selecionados.length === 0) {
+      alert('Marque pelo menos um aluno na caixa de destinatários acima.');
       return;
     }
 
-    // Se EmailJS estiver configurado, dispara automaticamente para todos via API
-    if (EMAILJS_SERVICE_ID && EMAILJS_TEMPLATE_ID && EMAILJS_PUBLIC_KEY) {
-      setEnviandoEmails(true);
-      let enviados = 0;
-      try {
-        for (const aluno of alvos) {
-          setProgressoEnvio(`Enviando ${enviados + 1} de ${alvos.length} (${aluno.saudacaoPersonalizada})...`);
-          const htmlFinal = gerarTemplateHtmlCompleto(aluno.saudacaoPersonalizada);
+    const alvosComEmail = selecionados.filter((i) => i.emailDestino);
 
-          await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              service_id: EMAILJS_SERVICE_ID,
-              template_id: EMAILJS_TEMPLATE_ID,
-              user_id: EMAILJS_PUBLIC_KEY,
-              template_params: {
-                to_email: aluno.emailDestino,
-                to_name: aluno.saudacaoPersonalizada,
-                subject: assuntoEmail,
-                message_html: htmlFinal,
-              },
-            }),
-          });
-          enviados++;
+    if (alvosComEmail.length === 0) {
+      alert(
+        `Os participantes marcados (${selecionados.map((s) => s.alunoNome).join(', ')}) não possuem e-mail preenchido no cadastro. Edite o cadastro do aluno na aba "Alunos, Bolsistas & Profs" para incluir o e-mail.`
+      );
+      return;
+    }
+
+    const brevoApiKey = import.meta.env.VITE_BREVO_API_KEY;
+    const brevoSenderEmail = import.meta.env.VITE_BREVO_SENDER_EMAIL;
+
+    if (!brevoApiKey || !brevoSenderEmail) {
+      alert('As variáveis VITE_BREVO_API_KEY e VITE_BREVO_SENDER_EMAIL não foram carregadas. Faça um Redeploy na Vercel.');
+      return;
+    }
+
+    setEnviandoEmails(true);
+    let enviados = 0;
+
+    try {
+      for (const aluno of alvosComEmail) {
+        setProgressoEnvio(`Enviando ${enviados + 1} de ${alvosComEmail.length} (${aluno.saudacaoPersonalizada})...`);
+        const htmlFinal = gerarTemplateHtmlCompleto(aluno.saudacaoPersonalizada);
+
+        const payloadBrevo = {
+          sender: {
+            name: 'No Compasso Studio de Dança',
+            email: brevoSenderEmail,
+          },
+          to: [
+            {
+              email: aluno.emailDestino,
+              name: aluno.saudacaoPersonalizada,
+            },
+          ],
+          subject: assuntoEmail,
+          htmlContent: htmlFinal,
+        };
+
+        if (anexosEmail.length > 0) {
+          payloadBrevo.attachment = anexosEmail.map((a) => ({
+            name: a.nome,
+            content: a.base64,
+          }));
         }
 
-        // Registra histórico do comunicado no Firebase
-        await addDoc(collection(db, 'comunicados_email'), {
-          cursoId: curso.id,
-          cursoTitulo: curso.titulo,
-          assunto: assuntoEmail,
-          corpoHtml: htmlCorpoEmail,
-          totalDestinatarios: enviados,
-          dataEnvio: new Date().toISOString(),
+        const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'api-key': brevoApiKey,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(payloadBrevo),
         });
 
-        alert(`Sucesso! ${enviados} e-mail(s) personalizados foram enviados.`);
-      } catch (err) {
-        alert('Erro durante o disparo: ' + err.message);
-      } finally {
-        setEnviandoEmails(false);
-        setProgressoEnvio('');
+        if (!resp.ok) {
+          const erroDetalhe = await resp.json();
+          throw new Error(erroDetalhe.message || 'Falha ao enviar pelo Brevo');
+        }
+
+        enviados++;
       }
-    } else {
-      // Modo Fallback (Abre o cliente de e-mail padrão com Cópia Oculta BCC para todos os selecionados)
-      const listaEmails = alvos.map((a) => a.emailDestino).join(',');
-      const textoLimpo = editorRef.current ? editorRef.current.innerText : '';
-      const corpoMailto = `Olá, aluno(a) / responsável!\n\n${textoLimpo}\n\n—\nNo Compasso Studio de Dança`;
-      window.open(
-        `mailto:?bcc=${encodeURIComponent(listaEmails)}&subject=${encodeURIComponent(assuntoEmail)}&body=${encodeURIComponent(corpoMailto)}`,
-        '_blank'
-      );
+
+      await addDoc(collection(db, 'comunicados_email'), {
+        cursoId: curso.id,
+        cursoTitulo: curso.titulo,
+        assunto: assuntoEmail,
+        corpoHtml: htmlCorpoEmail,
+        totalDestinatarios: enviados,
+        dataEnvio: new Date().toISOString(),
+      });
+
+      alert(`Sucesso! ${enviados} e-mail(s) personalizados foram enviados pelo Brevo.`);
+    } catch (err) {
+      alert('Erro no envio via Brevo: ' + err.message);
+    } finally {
+      setEnviandoEmails(false);
+      setProgressoEnvio('');
     }
   };
 
@@ -286,6 +386,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
       await addDoc(collection(db, 'matriculas'), {
         alunoId: pessoa.id,
         alunoNome: pessoa.nome,
+        email: pessoa.email || '',
         roleParticipante: papelNaTurma,
         cursoId: curso.id,
         cursoTitulo: curso.titulo,
@@ -375,7 +476,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
   return (
     <div className="space-y-6">
-      {/* Cabeçalho do Curso Aberto */}
       <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
         <button
           onClick={onVoltar}
@@ -419,7 +519,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           </div>
         </div>
 
-        {/* Sub-abas internas do Curso */}
         <div className="flex gap-2 mt-6 pt-4 border-t border-zinc-100 overflow-x-auto">
           <button
             onClick={() => setSubAba('inscritos')}
@@ -456,19 +555,16 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       </div>
 
-      {/* =====================================================================
-          SUB-ABA: ENVIAR E-MAIL GERAL PERSONALIZADO (EDITOR RICO + PREVIEW)
-         ===================================================================== */}
+      {/* SUB-ABA: ENVIAR E-MAIL GERAL PERSONALIZADO VIA BREVO */}
       {subAba === 'email' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Coluna Esquerda: Editor Rico */}
           <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
                 <Mail size={20} className="text-[#D81B60]" /> Redigir Comunicado para a Turma
               </h3>
               <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full">
-                Saudação automática ativa
+                Envio Direto via Brevo
               </span>
             </div>
 
@@ -484,7 +580,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                     setDestinatariosSelecionados(
                       destinatariosSelecionados.length === inscritosCompletos.length
                         ? []
-                        : inscritosCompletos.map((i) => i.alunoId)
+                        : inscritosCompletos.map((i) => i.id)
                     )
                   }
                   className="text-[11px] font-bold text-[#D81B60] hover:underline"
@@ -498,16 +594,16 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
               ) : (
                 <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                   {inscritosCompletos.map((insc) => {
-                    const marcado = destinatariosSelecionados.includes(insc.alunoId);
+                    const marcado = destinatariosSelecionados.includes(insc.id);
                     return (
                       <button
                         type="button"
                         key={insc.id}
                         onClick={() =>
                           setDestinatariosSelecionados((prev) =>
-                            prev.includes(insc.alunoId)
-                              ? prev.filter((id) => id !== insc.alunoId)
-                              : [...prev, insc.alunoId]
+                            prev.includes(insc.id)
+                              ? prev.filter((id) => id !== insc.id)
+                              : [...prev, insc.id]
                           )
                         }
                         className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
@@ -516,7 +612,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                             : 'bg-white text-zinc-600 border-zinc-300'
                         }`}
                       >
-                        {insc.saudacaoPersonalizada}
+                        {insc.saudacaoPersonalizada} {insc.emailDestino ? '' : '(sem e-mail)'}
                       </button>
                     );
                   })}
@@ -524,7 +620,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
               )}
             </div>
 
-            {/* Assunto */}
             <div>
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Assunto do E-mail</label>
               <input
@@ -535,7 +630,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
               />
             </div>
 
-            {/* Barra de Ferramentas do Editor */}
+            {/* Editor Rico com Imagem no Corpo, Link, Anexo e Emojis */}
             <div className="border border-zinc-300 rounded-2xl overflow-hidden">
               <div className="bg-zinc-100 px-3 py-2 border-b border-zinc-300 flex flex-wrap items-center gap-1.5">
                 <button
@@ -569,10 +664,14 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                   type="button"
                   onClick={inserirLinkNoEditor}
                   className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700"
-                  title="Inserir Link"
                 >
                   <Link2 size={14} className="text-[#D81B60]" /> Link
                 </button>
+
+                <label className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700 cursor-pointer">
+                  <ImageIcon size={14} className="text-emerald-700" /> Imagem no Corpo
+                  <input type="file" accept="image/*" className="hidden" onChange={handleInserirImagemNoCorpo} />
+                </label>
 
                 <label className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700 cursor-pointer">
                   <Paperclip size={14} className="text-[#4A041C]" /> Anexo
@@ -581,7 +680,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
                 <span className="h-4 w-[1px] bg-zinc-300 mx-1" />
 
-                {/* Paleta rápida de Emojis */}
                 <div className="flex items-center gap-1 flex-wrap">
                   <Smile size={14} className="text-amber-600 mr-0.5" />
                   {EMOJIS_RAPIDOS.map((em) => (
@@ -597,23 +695,20 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                 </div>
               </div>
 
-              {/* Cabeçalho fixo automático dentro do editor */}
               <div className="px-4 pt-3 pb-1 bg-pink-50/40 text-sm text-zinc-700 border-b border-dashed border-zinc-200">
-                Olá, <strong className="text-[#4A041C]">(Nome do Aluno ou Responsável)</strong>!
+                Olá, <strong className="text-[#4A041C]">(Nome do Aluno ou Responsável)</strong>! ✨
               </div>
 
-              {/* Área Editável Rica */}
               <div
                 ref={editorRef}
                 contentEditable
                 suppressContentEditableWarning
                 onInput={(e) => setHtmlCorpoEmail(e.currentTarget.innerHTML)}
                 dangerouslySetInnerHTML={{ __html: htmlCorpoEmail }}
-                className="min-h-[190px] p-4 text-sm text-zinc-900 focus:outline-none leading-relaxed"
+                className="min-h-[200px] p-4 text-sm text-zinc-900 focus:outline-none leading-relaxed"
               />
             </div>
 
-            {/* Lista de Anexos adicionados */}
             {anexosEmail.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {anexosEmail.map((anexo, idx) => (
@@ -638,33 +733,31 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
             <button
               type="button"
               disabled={enviandoEmails}
-              onClick={handleDispararEmailsEmMassa}
+              onClick={handleDispararEmailsBrevo}
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4A041C] to-[#D81B60] py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-md hover:brightness-110 transition"
             >
               <Send size={16} />
               {enviandoEmails
                 ? progressoEnvio
-                : `Enviar Comunicado Personalizado (${destinatariosSelecionados.length} destinatários)`}
+                : `Disparar E-mails Personalizados (${destinatariosSelecionados.length} destinatários)`}
             </button>
           </div>
 
-          {/* Coluna Direita: Pré-Visualização exata de como chegará no e-mail do aluno */}
+          {/* Pré-visualização com Logo do Studio */}
           <div className="lg:col-span-5 space-y-3">
             <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-zinc-500">
-              <Eye size={15} className="text-[#D81B60]" /> Pré-Visualização do E-mail (Exemplo real)
+              <Eye size={15} className="text-[#D81B60]" /> Pré-Visualização com Logo Oficial
             </div>
 
             <div
-              className="rounded-2xl shadow-md overflow-hidden"
+              className="rounded-2xl overflow-hidden"
               dangerouslySetInnerHTML={{ __html: gerarTemplateHtmlCompleto(primeiroInscritoPreview) }}
             />
           </div>
         </div>
       )}
 
-      {/* =====================================================================
-          SUB-ABA: INSCRITOS E SITUAÇÃO FINANCEIRA
-         ===================================================================== */}
+      {/* SUB-ABA: INSCRITOS */}
       {subAba === 'inscritos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
@@ -737,7 +830,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                       <tr key={item.id} className="hover:bg-zinc-50">
                         <td className="py-3 px-2 font-semibold text-zinc-900">
                           {item.alunoNome}
-                          <span className="block text-[11px] font-normal text-zinc-500">{item.emailDestino}</span>
+                          <span className="block text-[11px] font-normal text-zinc-500">
+                            {item.emailDestino || 'Sem e-mail cadastrado'}
+                          </span>
                           {item.codigoComprovante && (
                             <span className="block text-[10px] font-mono text-zinc-400">
                               QR: {item.codigoComprovante}
@@ -798,9 +893,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
-      {/* =====================================================================
-          SUB-ABA: EMENTA E PROFESSORES
-         ===================================================================== */}
+      {/* SUB-ABA: EMENTA E PROFESSORES */}
       {subAba === 'ementa' && (
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm max-w-3xl">
           <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C] mb-4">
@@ -846,9 +939,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         </div>
       )}
 
-      {/* =====================================================================
-          SUB-ABA: PLANOS DE AULA
-         ===================================================================== */}
+      {/* SUB-ABA: PLANOS DE AULA */}
       {subAba === 'planos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
