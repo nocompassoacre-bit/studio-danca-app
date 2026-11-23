@@ -148,18 +148,49 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
-  // Envia imagem para o Firebase Storage e insere URL pública no corpo do e-mail
+  // Função auxiliar que reduz qualquer PNG/JPG pesado (ex: 5MB) para ~180KB mantendo alta nitidez
+  const comprimirImagem = (file, maxWidth = 720, quality = 0.85) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob(
+            (blob) => {
+              resolve({
+                blob,
+                dataUrl: canvas.toDataURL('image/jpeg', quality),
+              });
+            },
+            'image/jpeg',
+            quality
+          );
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Envia imagem comprimida para o Firebase Storage e insere no corpo do e-mail
   const handleInserirImagemNoCorpo = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setSubindoImagem(true);
     try {
-      const nomeLimpo = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const caminhoStorage = `comunicados/${curso.id}_${Date.now()}_${nomeLimpo}`;
+      const { blob } = await comprimirImagem(file, 680, 0.85);
+      const nomeLimpo = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const caminhoStorage = `comunicados/${curso.id}_${Date.now()}_${nomeLimpo}.jpg`;
       const storageRef = ref(storage, caminhoStorage);
 
-      await uploadBytes(storageRef, file);
+      await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
       const urlPublica = await getDownloadURL(storageRef);
 
       if (editorRef.current) {
@@ -169,34 +200,46 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         setHtmlCorpoEmail(editorRef.current.innerHTML);
       }
     } catch (err) {
-      alert('Erro ao carregar imagem para o corpo do e-mail: ' + err.message);
+      alert('Ative o Storage no Firebase Console (menu Storage > Vamos começar) para inserir imagens no corpo. Detalhe: ' + err.message);
     } finally {
       setSubindoImagem(false);
       e.target.value = '';
     }
   };
 
-  const handleAnexarArquivo = (e) => {
+  // Anexa arquivos (comprime imagens grandes automaticamente e aceita PDFs até 10MB)
+  const handleAnexarArquivo = async (e) => {
     const files = Array.from(e.target.files || []);
-    files.forEach((file) => {
-      if (file.size > 4 * 1024 * 1024) {
-        alert(`O arquivo "${file.name}" excede 4MB.`);
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const base64Puro = ev.target.result.split(',')[1];
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        const { dataUrl } = await comprimirImagem(file, 1200, 0.88);
+        const base64Puro = dataUrl.split(',')[1];
+        const tamanhoKb = Math.round((base64Puro.length * 3) / 4 / 1024);
+        const nomeJpg = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
         setAnexosEmail((prev) => [
           ...prev,
-          {
-            nome: file.name,
-            tamanho: (file.size / 1024).toFixed(0) + ' KB',
-            base64: base64Puro,
-          },
+          { nome: nomeJpg, tamanho: `${tamanhoKb} KB`, base64: base64Puro },
         ]);
-      };
-      reader.readAsDataURL(file);
-    });
+      } else {
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`O arquivo "${file.name}" excede 10MB.`);
+          continue;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const base64Puro = ev.target.result.split(',')[1];
+          setAnexosEmail((prev) => [
+            ...prev,
+            {
+              nome: file.name,
+              tamanho: (file.size / 1024).toFixed(0) + ' KB',
+              base64: base64Puro,
+            },
+          ]);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
     e.target.value = '';
   };
 
