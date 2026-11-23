@@ -2,13 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import {
   addDoc, collection, deleteDoc, doc, getDocs, query, updateDoc, where
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   ArrowLeft, Users, FileText, BookOpen, Mail,
   CheckCircle2, Clock, Trash2, UserPlus, Save, Plus,
   Bold, Italic, Underline, Link2, Paperclip, Smile, Send, Eye, X, Image as ImageIcon
 } from 'lucide-react';
-import { db, storage } from './firebase';
+import { db } from './firebase';
 
 const EMOJIS_RAPIDOS = [
   '💃', '🕺', '🎶', '✨', '🔥', '❤️', '👏', '📅',
@@ -21,29 +20,25 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   const [planos, setPlanos] = useState([]);
   const [carregando, setCarregando] = useState(true);
 
-  // Adicionar participante
   const [usuarioAddId, setUsuarioAddId] = useState('');
   const [statusFinAdd, setStatusFinAdd] = useState('bolsista_isento');
 
-  // Edição de Ementa e Professor
   const [ementa, setEmenta] = useState(curso.ementa || '');
   const [profId, setProfId] = useState(curso.profId || '');
   const [salvandoEmenta, setSalvandoEmenta] = useState(false);
 
-  // Novo Plano de Aula
   const [tipoPlano, setTipoPlano] = useState('turma');
   const [tituloPlano, setTituloPlano] = useState('');
   const [conteudoPlano, setConteudoPlano] = useState('');
 
-  // Estados do Editor de E-mail em Massa (Brevo + Storage)
   const textoPadraoEmail = `<p>Tudo bem? Passando para compartilhar informações importantes sobre a nossa turma de <strong>${curso.titulo}</strong>.</p><p><br></p><p>📅 <strong>Dias:</strong> ${curso.dataInfo}<br>⏰ <strong>Horário:</strong> ${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'}</p><p><br></p><p>Qualquer dúvida, estamos à disposição! Nos vemos na pista! 💃🕺</p>`;
 
   const [assuntoEmail, setAssuntoEmail] = useState(`✨ Comunicado Oficial: ${curso.titulo} — No Compasso Studio`);
   const [htmlCorpoEmail, setHtmlCorpoEmail] = useState(textoPadraoEmail);
+  const [imagensEmbutidas, setImagensEmbutidas] = useState([]);
   const [anexosEmail, setAnexosEmail] = useState([]);
   const [destinatariosSelecionados, setDestinatariosSelecionados] = useState([]);
   const [enviandoEmails, setEnviandoEmails] = useState(false);
-  const [subindoImagem, setSubindoImagem] = useState(false);
   const [progressoEnvio, setProgressoEnvio] = useState('');
   const editorRef = useRef(null);
 
@@ -77,7 +72,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     carregarDadosTurma();
   }, [curso.id]);
 
-  // Inicializa o conteúdo do editor apenas ao abrir a aba de e-mail (mantém cursor estável)
   useEffect(() => {
     if (subAba === 'email' && editorRef.current) {
       editorRef.current.innerHTML = htmlCorpoEmail;
@@ -123,9 +117,27 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     { pago: 0, aPagar: 0 }
   );
 
-  // =========================================================================
-  // FUNÇÕES DO EDITOR RICO (TEXTO, LINKS, EMOJIS, IMAGENS STORAGE E ANEXOS)
-  // =========================================================================
+  // Comprime qualquer imagem pesada (PNG/JPG > 4MB) automaticamente no navegador
+  const comprimirImagem = (file, maxWidth = 760, quality = 0.85) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   const aplicarComandoEditor = (comando, valor = null) => {
     document.execCommand(comando, false, valor);
     if (editorRef.current) {
@@ -148,71 +160,34 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     }
   };
 
-  // Função auxiliar que reduz qualquer PNG/JPG pesado (ex: 5MB) para ~180KB mantendo alta nitidez
-  const comprimirImagem = (file, maxWidth = 720, quality = 0.85) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const scale = img.width > maxWidth ? maxWidth / img.width : 1;
-          canvas.width = img.width * scale;
-          canvas.height = img.height * scale;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob(
-            (blob) => {
-              resolve({
-                blob,
-                dataUrl: canvas.toDataURL('image/jpeg', quality),
-              });
-            },
-            'image/jpeg',
-            quality
-          );
-        };
-        img.src = ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  // Envia imagem comprimida para o Firebase Storage e insere no corpo do e-mail
+  // Insere imagem no corpo e envia como inline (cid:) direto pelo Brevo
   const handleInserirImagemNoCorpo = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setSubindoImagem(true);
-    try {
-      const { blob } = await comprimirImagem(file, 680, 0.85);
-      const nomeLimpo = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const caminhoStorage = `comunicados/${curso.id}_${Date.now()}_${nomeLimpo}.jpg`;
-      const storageRef = ref(storage, caminhoStorage);
+    const dataUrl = await comprimirImagem(file, 680, 0.85);
+    const base64Puro = dataUrl.split(',')[1];
+    const nomeCid = `arte_${Date.now()}.jpg`;
 
-      await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
-      const urlPublica = await getDownloadURL(storageRef);
+    setImagensEmbutidas((prev) => [
+      ...prev,
+      { nome: nomeCid, dataUrl, base64: base64Puro },
+    ]);
 
-      if (editorRef.current) {
-        editorRef.current.focus();
-        const imgTag = `<div style="margin:14px 0;text-align:center;"><img src="${urlPublica}" alt="No Compasso Studio" style="max-width:100%;border-radius:12px;border:1px solid #e4e4e7;display:block;margin:0 auto;" /></div><p><br></p>`;
-        document.execCommand('insertHTML', false, imgTag);
-        setHtmlCorpoEmail(editorRef.current.innerHTML);
-      }
-    } catch (err) {
-      alert('Ative o Storage no Firebase Console (menu Storage > Vamos começar) para inserir imagens no corpo. Detalhe: ' + err.message);
-    } finally {
-      setSubindoImagem(false);
-      e.target.value = '';
+    if (editorRef.current) {
+      editorRef.current.focus();
+      const imgTag = `<div style="margin:14px 0;text-align:center;"><img src="${dataUrl}" data-cid="${nomeCid}" alt="Arte No Compasso" style="max-width:100%;border-radius:12px;border:1px solid #e4e4e7;display:block;margin:0 auto;" /></div><p><br></p>`;
+      document.execCommand('insertHTML', false, imgTag);
+      setHtmlCorpoEmail(editorRef.current.innerHTML);
     }
+    e.target.value = '';
   };
 
-  // Anexa arquivos (comprime imagens grandes automaticamente e aceita PDFs até 10MB)
   const handleAnexarArquivo = async (e) => {
     const files = Array.from(e.target.files || []);
     for (const file of files) {
       if (file.type.startsWith('image/')) {
-        const { dataUrl } = await comprimirImagem(file, 1200, 0.88);
+        const dataUrl = await comprimirImagem(file, 1200, 0.88);
         const base64Puro = dataUrl.split(',')[1];
         const tamanhoKb = Math.round((base64Puro.length * 3) / 4 / 1024);
         const nomeJpg = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
@@ -243,12 +218,19 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     e.target.value = '';
   };
 
-  // =========================================================================
-  // TEMPLATE HTML INSTITUCIONAL DO NO COMPASSO STUDIO DE DANÇA
-  // =========================================================================
-  const gerarTemplateHtmlCompleto = (saudacao) => {
+  // Prepara o HTML trocando dataUrl por cid: para o Gmail abrir a imagem no corpo
+  const prepararHtmlParaEnvio = (htmlBruto) => {
+    let htmlProcessado = htmlBruto;
+    imagensEmbutidas.forEach((img) => {
+      htmlProcessado = htmlProcessado.split(img.dataUrl).join(`cid:${img.nome}`);
+    });
+    return htmlProcessado;
+  };
+
+  const gerarTemplateHtmlCompleto = (saudacao, paraEnvioReal = false) => {
     const logoUrlPublica = `${window.location.origin}/logo-studio.png`;
     const subtituloSelo = curso.tipoLabel || curso.tipo || 'Turma Oficial';
+    const corpoFinal = paraEnvioReal ? prepararHtmlParaEnvio(htmlCorpoEmail) : htmlCorpoEmail;
 
     return `
       <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:620px;margin:0 auto;border:1px solid #e4e4e7;border-radius:20px;overflow:hidden;background:#ffffff;box-shadow:0 8px 24px rgba(74,4,28,0.08);">
@@ -285,7 +267,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           </div>
 
           <div style="color:#27272a;">
-            ${htmlCorpoEmail}
+            ${corpoFinal}
           </div>
 
           <div style="margin-top:24px;padding:14px 18px;background:#FAFAFA;border:1px solid #E4E4E7;border-radius:14px;">
@@ -344,10 +326,20 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
     setEnviandoEmails(true);
     let enviados = 0;
 
+    // Junta anexos normais + imagens embutidas no corpo usadas no HTML
+    const inlineUsadas = imagensEmbutidas
+      .filter((img) => htmlCorpoEmail.includes(img.dataUrl))
+      .map((img) => ({ name: img.nome, content: img.base64 }));
+
+    const todosAnexos = [
+      ...inlineUsadas,
+      ...anexosEmail.map((a) => ({ name: a.nome, content: a.base64 })),
+    ];
+
     try {
       for (const aluno of alvosComEmail) {
         setProgressoEnvio(`Enviando ${enviados + 1} de ${alvosComEmail.length} (${aluno.saudacaoPersonalizada})...`);
-        const htmlFinal = gerarTemplateHtmlCompleto(aluno.saudacaoPersonalizada);
+        const htmlFinal = gerarTemplateHtmlCompleto(aluno.saudacaoPersonalizada, true);
 
         const payloadBrevo = {
           sender: {
@@ -364,11 +356,8 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           htmlContent: htmlFinal,
         };
 
-        if (anexosEmail.length > 0) {
-          payloadBrevo.attachment = anexosEmail.map((a) => ({
-            name: a.nome,
-            content: a.base64,
-          }));
+        if (todosAnexos.length > 0) {
+          payloadBrevo.attachment = todosAnexos;
         }
 
         const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -714,9 +703,8 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                 </button>
 
                 <label className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700 cursor-pointer">
-                  <ImageIcon size={14} className="text-emerald-700" />
-                  {subindoImagem ? 'Enviando imagem...' : 'Imagem no Corpo'}
-                  <input type="file" accept="image/*" disabled={subindoImagem} className="hidden" onChange={handleInserirImagemNoCorpo} />
+                  <ImageIcon size={14} className="text-emerald-700" /> Imagem no Corpo
+                  <input type="file" accept="image/*" className="hidden" onChange={handleInserirImagemNoCorpo} />
                 </label>
 
                 <label className="flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-200 text-xs font-bold text-zinc-700 cursor-pointer">
@@ -777,7 +765,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
             <button
               type="button"
-              disabled={enviandoEmails || subindoImagem}
+              disabled={enviandoEmails}
               onClick={handleDispararEmailsBrevo}
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4A041C] to-[#D81B60] py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-md hover:brightness-110 transition disabled:opacity-60"
             >
@@ -795,7 +783,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
             <div
               className="rounded-2xl overflow-hidden"
-              dangerouslySetInnerHTML={{ __html: gerarTemplateHtmlCompleto(primeiroInscritoPreview) }}
+              dangerouslySetInnerHTML={{ __html: gerarTemplateHtmlCompleto(primeiroInscritoPreview, false) }}
             />
           </div>
         </div>
