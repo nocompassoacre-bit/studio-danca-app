@@ -31,10 +31,10 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   const [tituloPlano, setTituloPlano] = useState('');
   const [conteudoPlano, setConteudoPlano] = useState('');
 
+  const textoPadraoEmail = `<p>Tudo bem? Passando para compartilhar informações importantes sobre a nossa turma de <strong>${curso.titulo}</strong>.</p><p><br></p><p>📅 <strong>Dias:</strong> ${curso.dataInfo}<br>⏰ <strong>Horário:</strong> ${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'}</p><p><br></p><p>Qualquer dúvida, estamos à disposição! Nos vemos na pista! 💃🕺</p>`;
+
   const [assuntoEmail, setAssuntoEmail] = useState(`✨ Comunicado Oficial: ${curso.titulo} — No Compasso Studio`);
-  const [htmlCorpoEmail, setHtmlCorpoEmail] = useState(
-    `<p>Tudo bem? Passando para compartilhar informações importantes sobre a nossa turma de <strong>${curso.titulo}</strong>.</p><p><br></p><p>📅 <strong>Dias:</strong> ${curso.dataInfo}<br>⏰ <strong>Horário:</strong> ${curso.horaInicio || '19:00'} às ${curso.horarioFim || '21:00'}</p><p><br></p><p>Qualquer dúvida, estamos à disposição! Nos vemos na pista! 💃🕺</p>`
-  );
+  const [htmlCorpoEmail, setHtmlCorpoEmail] = useState(textoPadraoEmail);
   const [anexosEmail, setAnexosEmail] = useState([]);
   const [destinatariosSelecionados, setDestinatariosSelecionados] = useState([]);
   const [enviandoEmails, setEnviandoEmails] = useState(false);
@@ -70,6 +70,13 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
   useEffect(() => {
     carregarDadosTurma();
   }, [curso.id]);
+
+  // Preenche o editor apenas ao abrir a aba de e-mail (evita cursor pulando ao digitar)
+  useEffect(() => {
+    if (subAba === 'email' && editorRef.current) {
+      editorRef.current.innerHTML = htmlCorpoEmail;
+    }
+  }, [subAba]);
 
   const inscritosCompletos = matriculas.map((mat) => {
     const dadosUser =
@@ -188,6 +195,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
   const gerarTemplateHtmlCompleto = (saudacao) => {
     const logoUrlPublica = `${window.location.origin}/logo-studio.png`;
+    const subtituloSelo = curso.tipoLabel || curso.tipo || 'Turma Oficial';
 
     return `
       <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:620px;margin:0 auto;border:1px solid #e4e4e7;border-radius:20px;overflow:hidden;background:#ffffff;box-shadow:0 8px 24px rgba(74,4,28,0.08);">
@@ -209,7 +217,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                   ${curso.titulo}
                 </h2>
                 <span style="display:inline-block;margin-top:6px;background:rgba(255,255,255,0.14);color:#FCE4EC;font-size:11px;padding:3px 10px;border-radius:99px;">
-                  🎶 ${curso.frente || 'Dança de Salão'} • ${curso.estilo}
+                  🎶 ${curso.frente || 'Dança de Salão'} • ${subtituloSelo}
                 </span>
               </td>
             </tr>
@@ -328,7 +336,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         enviados++;
       }
 
-      // Grava histórico no Firestore sem interromper o fluxo se a regra ainda não estiver ativa
       try {
         await addDoc(collection(db, 'comunicados_email'), {
           cursoId: curso.id,
@@ -476,7 +483,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
               <span className="px-2.5 py-0.5 rounded bg-[#D81B60] text-white text-[10px] font-bold uppercase tracking-wider">
                 {curso.tipoLabel || curso.tipo}
               </span>
-              <span className="text-xs font-semibold text-zinc-500">• {curso.estilo}</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-bold uppercase font-condensed text-zinc-900">
               {curso.titulo}
@@ -684,7 +690,6 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
                 contentEditable
                 suppressContentEditableWarning
                 onInput={(e) => setHtmlCorpoEmail(e.currentTarget.innerHTML)}
-                dangerouslySetInnerHTML={{ __html: htmlCorpoEmail }}
                 className="min-h-[200px] p-4 text-sm text-zinc-900 focus:outline-none leading-relaxed"
               />
             </div>
