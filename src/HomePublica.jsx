@@ -8,7 +8,7 @@ import CourseCard from './CourseCard';
 export default function HomePublica() {
   const [perfilSelecionado, setPerfilSelecionado] = useState(null);
   const [cursos, setCursos] = useState([]);
-  const [filtro, setFiltro] = useState('todos');
+  const [filtro, setFiltro] = useState('todos'); // 'todos' | 'Dança de Salão' | 'Ballet' | 'ferias'
 
   useEffect(() => {
     const carregarCursos = async () => {
@@ -24,7 +24,11 @@ export default function HomePublica() {
     carregarCursos();
   }, []);
 
-  const cursosFiltrados = cursos.filter((c) => (filtro === 'todos' ? true : c.tipo === filtro));
+  const cursosFiltrados = cursos.filter((c) => {
+    if (filtro === 'todos') return true;
+    if (filtro === 'ferias') return c.tipo === 'ferias';
+    return (c.frente || 'Dança de Salão') === filtro;
+  });
 
   const cardsAcesso = [
     {
@@ -122,7 +126,7 @@ export default function HomePublica() {
           </div>
 
           <a
-            href="https://wa.me/5568999533619"
+            href="https://wa.me/55689933619"
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-3 text-[#E5C17B] hover:text-white transition"
@@ -140,18 +144,19 @@ export default function HomePublica() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
             <span className="text-xs font-bold uppercase tracking-[0.25em] text-[#D81B60]">
-              Programação Oficial
+              Dança de Salão & Ballet
             </span>
             <h2 className="text-3xl md:text-4xl font-bold uppercase font-condensed mt-1">
-              Turmas Fixas & Cursos de Férias
+              Turmas Fixas & Cursos Especiais
             </h2>
           </div>
 
           <div className="flex flex-wrap gap-2">
             {[
-              { id: 'todos', label: 'Todos os Cursos' },
+              { id: 'todos', label: 'Todos' },
+              { id: 'Dança de Salão', label: 'Dança de Salão' },
+              { id: 'Ballet', label: 'Ballet' },
               { id: 'ferias', label: 'Cursos de Férias', icon: Sparkles },
-              { id: 'fixo', label: 'Turmas Fixas' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -171,7 +176,7 @@ export default function HomePublica() {
         {cursosFiltrados.length === 0 ? (
           <div className="rounded-2xl border border-zinc-800 bg-[#16161B] p-12 text-center text-zinc-400">
             <p className="text-lg font-semibold text-zinc-200">
-              Novas turmas e cursos de férias sendo preparados!
+              Novas turmas de Dança de Salão e Ballet sendo preparadas!
             </p>
             <p className="text-sm mt-1">
               Acesse o portal acima ou fale conosco pelo WhatsApp para reservar sua vaga.
@@ -180,11 +185,7 @@ export default function HomePublica() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {cursosFiltrados.map((curso) => (
-              <CourseCard
-                key={curso.id}
-                curso={curso}
-                onMatricular={() => setPerfilSelecionado('aluno')}
-              />
+              <CourseCard key={curso.id} curso={curso} />
             ))}
           </div>
         )}
