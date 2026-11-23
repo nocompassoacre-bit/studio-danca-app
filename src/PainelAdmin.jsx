@@ -8,7 +8,7 @@ import AdminGestao from './AdminGestao';
 
 export default function PainelAdmin() {
   const { userData, logout } = useAuth();
-  const [abaAtiva, setAbaAtiva] = useState('financeiro');
+  const [abaAtiva, setAbaAtiva] = useState('usuarios'); // Inicia em Alunos, Bolsistas & Profs
 
   const [financeiro, setFinanceiro] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
@@ -41,16 +41,16 @@ export default function PainelAdmin() {
     carregarTudo();
   }, []);
 
+  // Ordem exata solicitada: Alunos -> Cursos -> Eventos -> Financeiro
   const abas = [
-    { id: 'financeiro', label: 'Financeiro & Lucros', icon: DollarSign },
     { id: 'usuarios', label: 'Alunos, Bolsistas & Profs', icon: Users },
     { id: 'cursos', label: 'Cursos & Turmas', icon: BookOpen },
     { id: 'eventos', label: 'Eventos', icon: Calendar },
+    { id: 'financeiro', label: 'Financeiro & Lucros', icon: DollarSign },
   ];
 
   return (
     <div className="min-h-screen bg-[#F4F4F6] text-zinc-900">
-      {/* Cabeçalho Institucional Claro com Barra Superior Vinho */}
       <header className="bg-white border-b border-zinc-200 sticky top-0 z-30">
         <div className="h-1.5 bg-gradient-to-r from-[#4A041C] via-[#D81B60] to-[#4A041C]" />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -80,7 +80,6 @@ export default function PainelAdmin() {
           </div>
         </div>
 
-        {/* Menu de Navegação das Abas */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex gap-2 overflow-x-auto pb-3 pt-1">
           {abas.map((tab) => {
             const Icone = tab.icon;
@@ -103,7 +102,6 @@ export default function PainelAdmin() {
         </div>
       </header>
 
-      {/* Conteúdo Principal */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {carregando ? (
           <div className="text-center py-20 text-zinc-500 font-semibold">
@@ -122,6 +120,7 @@ export default function PainelAdmin() {
             usuarios={usuarios}
             cursos={cursos}
             eventos={eventos}
+            financeiro={financeiro}
             recarregar={carregarTudo}
           />
         )}
