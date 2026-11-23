@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
-import { UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check } from 'lucide-react';
+import { addDoc, collection, deleteDoc, doc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check, Users, X } from 'lucide-react';
 import { db } from './firebase';
 
 const MODALIDADES = [
@@ -16,6 +16,13 @@ const MODALIDADES = [
 
 export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar }) {
   const [copiadoId, setCopiadoId] = useState(null);
+
+  // Modal de Participantes do Curso
+  const [cursoSelecionado, setCursoSelecionado] = useState(null);
+  const [participantesCurso, setParticipantesCurso] = useState([]);
+  const [usuarioParaAdicionar, setUsuarioParaAdicionar] = useState('');
+  const [situacaoFinanceiraAdd, setSituacaoFinanceiraAdd] = useState('bolsista_isento'); // 'bolsista_isento' | 'pago_balcao' | 'pendente'
+  const [carregandoPart, setCarregandoPart] = useState(false);
 
   // Estados para Cadastro de Usuários
   const [nome, setNome] = useState('');
@@ -52,12 +59,84 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
   const [descEvento, setDescEvento] = useState('');
 
   const profs = usuarios.filter((u) => u.role === 'prof');
+  const alunosEBolsistas = usuarios.filter((u) => u.role === 'aluno' || u.role === 'bolsista');
 
   const copiarLinkInscricao = (tipo, id) => {
     const url = `${window.location.origin}/inscricao/${tipo}/${id}`;
     navigator.clipboard.writeText(url);
     setCopiadoId(id);
     setTimeout(() => setCopiadoId(null), 2500);
+  };
+
+  // Abrir gerenciador de participantes de um curso específico
+  const abrirParticipantes = async (curso) => {
+    setCursoSelecionado(curso);
+    setCarregandoPart(true);
+    try {
+      const q = query(collection(db, 'matriculas'), where('cursoId', '==', curso.id));
+      const snap = await getDocs(q);
+      setParticipantesCurso(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCarregandoPart(false);
+    }
+  };
+
+  const handleAdicionarParticipanteManual = async (e) => {
+    e.preventDefault();
+    if (!usuarioParaAdicionar || !cursoSelecionado) return;
+    const pessoa = usuarios.find((u) => u.id === usuarioParaAdicionar);
+    if (!pessoa) return;
+
+    const jaInscrito = participantesCurso.some((p) => p.alunoId === pessoa.id);
+    if (jaInscrito) {
+      alert('Esta pessoa já está na lista de participantes deste curso.');
+      return;
+    }
+
+    const hoje = new Date().toISOString().split('T')[0];
+    try {
+      await addDoc(collection(db, 'matriculas'), {
+        alunoId: pessoa.id,
+        alunoNome: pessoa.nome,
+        roleParticipante: pessoa.role, // 'aluno' ou 'bolsista'
+        cursoId: cursoSelecionado.id,
+        cursoTitulo: cursoSelecionado.titulo,
+        tipoInscricao: 'manual_admin',
+        dataMatricula: hoje,
+        diasRestantes: 30,
+        status: 'ativa',
+      });
+
+      // Se não for bolsista isento, gera lançamento no financeiro
+      if (situacaoFinanceiraAdd !== 'bolsista_isento' && Number(cursoSelecionado.valor) > 0) {
+        await addDoc(collection(db, 'financeiro'), {
+          tipo: 'receita',
+          alunoId: pessoa.id,
+          cursoId: cursoSelecionado.id,
+          valor: Number(cursoSelecionado.valor),
+          dataVencimento: hoje,
+          dataPagamento: situacaoFinanceiraAdd === 'pago_balcao' ? hoje : '',
+          status: situacaoFinanceiraAdd === 'pago_balcao' ? 'pago' : 'pendente',
+          metodo: situacaoFinanceiraAdd === 'pago_balcao' ? 'Recepção / Balcão' : 'A Receber',
+          observacao: `Inclusão Manual (${cursoSelecionado.titulo}) - ${pessoa.nome}`,
+          criadoEm: new Date().toISOString(),
+        });
+      }
+
+      setUsuarioParaAdicionar('');
+      abrirParticipantes(cursoSelecionado);
+      recarregar();
+    } catch (err) {
+      alert('Erro ao adicionar participante: ' + err.message);
+    }
+  };
+
+  const handleRemoverParticipante = async (matriculaId) => {
+    if (!window.confirm('Remover este participante da turma?')) return;
+    await deleteDoc(doc(db, 'matriculas', matriculaId));
+    abrirParticipantes(cursoSelecionado);
   };
 
   const handleCriarUsuario = async (e) => {
@@ -121,7 +200,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
     const profObj = profs.find((p) => p.id === profIdSelecionado);
     const modObj = MODALIDADES.find((m) => m.id === tipoCurso);
     try {
-      const docRef = await addDoc(collection(db, 'cursos'), {
+      await addDoc(collection(db, 'cursos'), {
         titulo: tituloCurso,
         tipo: tipoCurso,
         tipoLabel: modObj ? modObj.label : 'Turma',
@@ -141,7 +220,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
       setTituloCurso('');
       setValorCurso('');
       setDataInfo('');
-      alert('Curso lançado! O link de inscrição e pagamento já está disponível na lista ao lado.');
+      alert('Curso lançado! Agora você pode copiar o link de inscrição ou adicionar participantes manualmente.');
       recarregar();
     } catch (err) {
       alert('Erro ao criar curso: ' + err.message);
@@ -171,14 +250,14 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
       setDataEvento('');
       setValorIngresso('');
       setDescEvento('');
-      alert('Evento publicado com formulário de inscrição ativo!');
+      alert('Evento publicado!');
       recarregar();
     } catch (err) {
       alert('Erro ao criar evento: ' + err.message);
     }
   };
 
-  // ABA 1: USUÁRIOS (Alunos com dados completos, Bolsistas, Professores, Admins)
+  // ABA 1: USUÁRIOS
   if (aba === 'usuarios') {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -455,7 +534,6 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
               />
             </div>
 
-            {/* Hora de Início e Fim */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Hora de Início</label>
@@ -500,18 +578,6 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
               </div>
             </div>
 
-            <label className="flex items-center gap-2 pt-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={gerarFormInscricao}
-                onChange={(e) => setGerarFormInscricao(e.target.checked)}
-                className="rounded text-[#D81B60] focus:ring-[#D81B60]"
-              />
-              <span className="text-xs font-semibold text-zinc-700">
-                Ativar formulário de inscrição online + QR Code
-              </span>
-            </label>
-
             <button
               type="submit"
               className="w-full rounded-xl bg-[#4A041C] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#2D0210] transition"
@@ -521,7 +587,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
           </form>
         </div>
 
-        {/* Lista de Cursos com Botão de Copiar Link de Inscrição */}
+        {/* Lista de Cursos com Gerenciador de Participantes e Link */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
           <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900 mb-4">
             Lançamentos & Histórico de Cursos ({cursos.length})
@@ -546,11 +612,19 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
+                    onClick={() => abrirParticipantes(c)}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#4A041C] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2D0210] transition"
+                  >
+                    <Users size={14} />
+                    Participantes
+                  </button>
+
+                  <button
                     onClick={() => copiarLinkInscricao('curso', c.id)}
                     className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-1.5 text-xs font-bold text-[#D81B60] hover:bg-pink-100 transition"
                   >
                     {copiadoId === c.id ? <Check size={14} /> : <Link2 size={14} />}
-                    {copiadoId === c.id ? 'Link Copiado!' : 'Link Inscrição'}
+                    {copiadoId === c.id ? 'Copiado!' : 'Link Form'}
                   </button>
 
                   <button
@@ -568,6 +642,92 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
             ))}
           </div>
         </div>
+
+        {/* MODAL: GERENCIAR PARTICIPANTES (ALUNOS E BOLSISTAS) NO CURSO */}
+        {cursoSelecionado && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-zinc-200">
+              <div className="flex items-center justify-between border-b border-zinc-200 pb-3 mb-4">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-[#D81B60]">Gestão de Turma</span>
+                  <h3 className="text-xl font-bold uppercase font-condensed text-[#4A041C]">
+                    Participantes: {cursoSelecionado.titulo}
+                  </h3>
+                </div>
+                <button onClick={() => setCursoSelecionado(null)} className="text-zinc-400 hover:text-zinc-800">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Adicionar Aluno ou Bolsista manualmente */}
+              <form onSubmit={handleAdicionarParticipanteManual} className="bg-zinc-50 p-4 rounded-xl border border-zinc-200 space-y-3 mb-4">
+                <p className="text-xs font-bold uppercase text-zinc-600">Incluir Aluno ou Bolsista Manualmente</p>
+
+                <select
+                  required
+                  value={usuarioParaAdicionar}
+                  onChange={(e) => setUsuarioParaAdicionar(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
+                >
+                  <option value="">Selecione um Aluno ou Bolsista cadastrado...</option>
+                  {alunosEBolsistas.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.nome} ({u.role.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={situacaoFinanceiraAdd}
+                    onChange={(e) => setSituacaoFinanceiraAdd(e.target.value)}
+                    className="flex-1 rounded-xl border border-zinc-300 bg-white p-2 text-xs font-semibold text-zinc-800"
+                  >
+                    <option value="bolsista_isento">Bolsista / Isento (Sem cobrança)</option>
+                    <option value="pago_balcao">Aluno Pago no Balcão (Lança Receita)</option>
+                    <option value="pendente">Aluno A Receber (Lança Pendência)</option>
+                  </select>
+
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-[#D81B60] px-4 py-2 text-xs font-bold uppercase text-white hover:bg-[#AD1457]"
+                  >
+                    + Incluir na Turma
+                  </button>
+                </div>
+              </form>
+
+              {/* Lista de Inscritos */}
+              <div className="max-h-60 overflow-y-auto space-y-2">
+                {carregandoPart ? (
+                  <p className="text-xs text-center text-zinc-500 py-4">Carregando participantes...</p>
+                ) : participantesCurso.length === 0 ? (
+                  <p className="text-xs text-center text-zinc-400 py-4">Nenhum participante inscrito nesta turma ainda.</p>
+                ) : (
+                  participantesCurso.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between p-2.5 rounded-lg border border-zinc-200 text-sm">
+                      <div>
+                        <span className="font-semibold text-zinc-900">{p.alunoNome}</span>
+                        <span className={`ml-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                          p.roleParticipante === 'bolsista' ? 'bg-cyan-100 text-cyan-800' : 'bg-zinc-100 text-zinc-700'
+                        }`}>
+                          {p.roleParticipante || 'aluno'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleRemoverParticipante(p.id)}
+                        className="text-zinc-400 hover:text-red-600 p-1"
+                        title="Remover da turma"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -682,7 +842,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, recarregar
                   className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-1.5 text-xs font-bold text-[#D81B60] hover:bg-pink-100"
                 >
                   {copiadoId === ev.id ? <Check size={14} /> : <Link2 size={14} />}
-                  {copiadoId === ev.id ? 'Link Copiado!' : 'Link Ingresso'}
+                  {copiadoId === ev.id ? 'Copiado!' : 'Link Ingresso'}
                 </button>
                 <button
                   onClick={async () => { await deleteDoc(doc(db, 'eventos', ev.id)); recarregar(); }}
