@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   collection,
   getDocs,
@@ -16,10 +16,95 @@ import {
   UserCheck,
   Calendar,
   Sparkles,
+  MapPin,
+  Bell,
+  ShieldCheck,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
 import SegurancaSenhaCard from './SegurancaSenhaCard';
+
+// Coordenadas oficiais: Stúdio de Dança "No Compasso" - Estr. das Placas, 1909
+const STUDIO_LAT = -9.9406271;
+const STUDIO_LNG = -67.8227701;
+const RAIO_MAXIMO_METROS = 120; // Margem segura para GPS interno
+
+// Cálculo de distância em metros (Fórmula de Haversine)
+function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Raio da Terra em metros
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * rad) *
+      Math.cos(lat2 * rad) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
+// Gera ou recupera assinatura única do dispositivo (impede 2 presenças no mesmo celular)
+function obterIdentificadorAparelho() {
+  const chaveStorage = 'nocompasso_device_uid_v1';
+  let idSalvo = localStorage.getItem(chaveStorage);
+  if (!idSalvo) {
+    const assinaturaHardware = [
+      navigator.userAgent,
+      screen.width,
+      screen.height,
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ].join('|');
+
+    let hash = 0;
+    for (let i = 0; i < assinaturaHardware.length; i++) {
+      hash = (hash << 5) - hash + assinaturaHardware.charCodeAt(i);
+      hash |= 0;
+    }
+    const aleatorio = Math.random().toString(36).substring(2, 10);
+    idSalvo = `DEV_${Math.abs(hash)}_${aleatorio}`;
+    localStorage.setItem(chaveStorage, idSalvo);
+  }
+  return idSalvo;
+}
+
+// Converte "HH:MM" em minutos desde 00:00
+function horaParaMinutos(horaStr) {
+  if (!horaStr || !horaStr.includes(':')) return null;
+  const [h, m] = horaStr.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+// Verifica se o curso ocorre no dia da semana atual (0=Dom, 1=Seg, ..., 6=Sab)
+function cursoOcorreHoje(dataInfo, diaSemanaIndex) {
+  if (!dataInfo) return true;
+  const texto = dataInfo
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const mapaDias = [
+    ['dom'],
+    ['seg'],
+    ['ter'],
+    ['qua'],
+    ['qui'],
+    ['sex'],
+    ['sab'],
+  ];
+
+  // Se o texto menciona algum dia da semana, checa se inclui o de hoje
+  const algumDiaCitado = mapaDias
+    .flat()
+    .some((sigla) => texto.includes(sigla));
+
+  if (!algumDiaCitado) return true; // Ex: "Todos os dias" ou data específica
+  return mapaDias[diaSemanaIndex].some((sigla) => texto.includes(sigla));
+}
 
 function calcularVigenciaBolsa(dataInicio, vigenciaMeses, dataFimExplicita) {
   if (!dataInicio && !dataFimExplicita) return null;
@@ -77,16 +162,70 @@ export default function PainelBolsista() {
   const [carregando, setCarregando] = useState(true);
 
   const [presencas, setPresencas] = useState([]);
+  const [todasPresencasHoje, setTodasPresencasHoje] = useState([]);
   const [avaliacoes, setAvaliacoes] = useState([]);
-  const [cursos, setCursos] = useState([]);
+  const [minhasTurmas, setMinhasTurmas] = useState([]);
 
-  // Formulário de Check-in / Registro de Atividade
-  const [dataAtividade, setDataAtividade] = useState(
-    new Date().toISOString().split('T')[0]
+  // Estados de Localização e Horário
+  const [turmaSelecionadaId, setTurmaSelecionadaId] = useState('');
+  const [distanciaStudio, setDistanciaStudio] = useState(null);
+  const [erroGps, setErroGps] = useState('');
+  const [buscandoGps, setBuscandoGps] = useState(false);
+  const [agora, setAgora] = useState(new Date());
+
+  // Notificações
+  const [permissaoNotif, setPermissaoNotif] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'denied'
   );
-  const [tipoAtividade, setTipoAtividade] = useState('Apoio em Turma');
-  const [descricaoAtividade, setDescricaoAtividade] = useState('');
   const [registrandoCheckin, setRegistrandoCheckin] = useState(false);
+
+  const deviceId = useMemo(() => obterIdentificadorAparelho(), []);
+  const hojeIso = agora.toISOString().split('T')[0];
+
+  // Relógio em tempo real (atualiza a cada 30s)
+  useEffect(() => {
+    const timer = setInterval(() => setAgora(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Verifica GPS automaticamente ao abrir
+  const verificarLocalizacaoAtual = () => {
+    if (!('geolocation' in navigator)) {
+      setErroGps('Seu navegador/celular não suporta geolocalização.');
+      return;
+    }
+    setBuscandoGps(true);
+    setErroGps('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const dist = calcularDistanciaMetros(
+          pos.coords.latitude,
+          pos.coords.longitude,
+          STUDIO_LAT,
+          STUDIO_LNG
+        );
+        setDistanciaStudio(dist);
+        setBuscandoGps(false);
+      },
+      (err) => {
+        setBuscandoGps(false);
+        if (err.code === 1) {
+          setErroGps(
+            'Permissão de localização negada. Ative o GPS do celular para o site.'
+          );
+        } else {
+          setErroGps(
+            'Não foi possível obter sua localização exata. Tente novamente.'
+          );
+        }
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  };
+
+  useEffect(() => {
+    verificarLocalizacaoAtual();
+  }, []);
 
   const carregarDadosBolsista = async () => {
     if (!user?.uid) return;
@@ -101,11 +240,23 @@ export default function PainelBolsista() {
         ),
         getDocs(
           query(
+            collection(db, 'presencas_bolsistas'),
+            where('data', '==', hojeIso)
+          )
+        ),
+        getDocs(
+          query(
             collection(db, 'avaliacoes_bolsistas'),
             where('bolsistaId', '==', user.uid)
           )
         ),
         getDocs(collection(db, 'cursos')),
+        getDocs(
+          query(
+            collection(db, 'matriculas'),
+            where('alunoId', '==', user.uid)
+          )
+        ),
       ]);
 
       const extrair = (res) =>
@@ -116,14 +267,35 @@ export default function PainelBolsista() {
       const listaPres = extrair(resultados[0]).sort((a, b) =>
         (b.data || '').localeCompare(a.data || '')
       );
-      const listaAval = extrair(resultados[1]).sort((a, b) =>
+      const presHoje = extrair(resultados[1]);
+      const listaAval = extrair(resultados[2]).sort((a, b) =>
         (b.dataAvaliacao || '').localeCompare(a.dataAvaliacao || '')
       );
-      const listaCursos = extrair(resultados[2]).filter((c) => c.ativo !== false);
+      const todosCursos = extrair(resultados[3]).filter((c) => c.ativo !== false);
+      const minhasMatriculas = extrair(resultados[4]);
+
+      // Filtra as turmas em que o bolsista está cadastrado (via matrícula ou vínculo direto)
+      const idsMatriculados = new Set(
+        minhasMatriculas.map((m) => m.cursoId)
+      );
+      const cursosVinculados = todosCursos.filter(
+        (c) =>
+          idsMatriculados.has(c.id) ||
+          (Array.isArray(c.bolsistasIds) && c.bolsistasIds.includes(user.uid))
+      );
+
+      // Se ainda não houver matrícula formal vinculada, mostra os cursos ativos como fallback
+      const listaFinalTurmas =
+        cursosVinculados.length > 0 ? cursosVinculados : todosCursos;
 
       setPresencas(listaPres);
+      setTodasPresencasHoje(presHoje);
       setAvaliacoes(listaAval);
-      setCursos(listaCursos);
+      setMinhasTurmas(listaFinalTurmas);
+
+      if (listaFinalTurmas.length > 0 && !turmaSelecionadaId) {
+        setTurmaSelecionadaId(listaFinalTurmas[0].id);
+      }
     } catch (err) {
       console.error('Erro ao carregar portal do bolsista:', err);
     } finally {
@@ -135,24 +307,163 @@ export default function PainelBolsista() {
     carregarDadosBolsista();
   }, [user?.uid]);
 
+  // Sistema de Notificações (1h antes do início e no horário de término)
+  useEffect(() => {
+    if (permissaoNotif !== 'granted' || minhasTurmas.length === 0) return;
+
+    const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
+    const diaHoje = agora.getDay();
+    const primeiroNome = (userData?.nome || 'Bolsista').split(' ')[0];
+
+    minhasTurmas.forEach((turma) => {
+      if (!cursoOcorreHoje(turma.dataInfo, diaHoje)) return;
+
+      const minInicio = horaParaMinutos(turma.horaInicio);
+      const minFim = horaParaMinutos(turma.horarioFim);
+
+      // 1. Notificação 1 hora antes do início (janela entre -60 e -55 min)
+      if (minInicio !== null) {
+        const diffInicio = minInicio - minutosAgora;
+        const chaveNotifAntes = `notif_antes_${hojeIso}_${turma.id}_${user?.uid}`;
+        if (
+          diffInicio <= 60 &&
+          diffInicio >= 55 &&
+          !localStorage.getItem(chaveNotifAntes)
+        ) {
+          new Notification('No Compasso Studio de Dança', {
+            body: `Olá ${primeiroNome}, sua aula de ${turma.titulo} está perto de começar (às ${turma.horaInicio}), por favor não atrase.`,
+            icon: '/logo-studio.png',
+          });
+          localStorage.setItem(chaveNotifAntes, 'enviada');
+        }
+      }
+
+      // 2. Notificação no fim da aula (janela entre 0 e +10 min após o fim)
+      if (minFim !== null) {
+        const diffFim = minutosAgora - minFim;
+        const chaveNotifFim = `notif_fim_${hojeIso}_${turma.id}_${user?.uid}`;
+        if (
+          diffFim >= 0 &&
+          diffFim <= 10 &&
+          !localStorage.getItem(chaveNotifFim)
+        ) {
+          new Notification('Marque sua Presença - No Compasso', {
+            body: `Olá ${primeiroNome}, não esqueça de marcar sua presença na atividade "${turma.titulo}" que acabou de participar!`,
+            icon: '/logo-studio.png',
+          });
+          localStorage.setItem(chaveNotifFim, 'enviada');
+        }
+      }
+    });
+  }, [agora, permissaoNotif, minhasTurmas, userData?.nome, hojeIso, user?.uid]);
+
+  const solicitarPermissaoNotificacoes = async () => {
+    if (!('Notification' in window)) {
+      alert('Este navegador não suporta notificações.');
+      return;
+    }
+    const res = await Notification.requestPermission();
+    setPermissaoNotif(res);
+    if (res === 'granted') {
+      new Notification('Lembretes Ativados!', {
+        body: `Olá ${(userData?.nome || '').split(' ')[0]}, você será avisado 1h antes das aulas e ao término para marcar presença.`,
+        icon: '/logo-studio.png',
+      });
+    }
+  };
+
+  // Avaliação das regras para a turma selecionada
+  const turmaAtual = minhasTurmas.find((t) => t.id === turmaSelecionadaId);
+  const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
+  const diaHoje = agora.getDay();
+
+  const avaliacaoJanela = useMemo(() => {
+    if (!turmaAtual) {
+      return { liberado: false, motivo: 'Nenhuma turma vinculada.' };
+    }
+
+    const ehHoje = cursoOcorreHoje(turmaAtual.dataInfo, diaHoje);
+    if (!ehHoje) {
+      return {
+        liberado: false,
+        motivo: `Esta turma acontece em (${turmaAtual.dataInfo}), não hoje.`,
+      };
+    }
+
+    const minFim = horaParaMinutos(turmaAtual.horarioFim);
+    if (minFim === null) {
+      return {
+        liberado: false,
+        motivo: 'Horário de término da turma não configurado pela coordenação.',
+      };
+    }
+
+    const minLimite = minFim + 60; // Até 1 hora depois do fim
+    if (minutosAgora < minFim) {
+      return {
+        liberado: false,
+        motivo: `Aguarde o fim da aula. A presença abre às ${turmaAtual.horarioFim}.`,
+      };
+    }
+    if (minutosAgora > minLimite) {
+      const hLim = String(Math.floor(minLimite / 60)).padStart(2, '0');
+      const mLim = String(minLimite % 60).padStart(2, '0');
+      return {
+        liberado: false,
+        motivo: `Prazo encerrado! A tolerância de 1 hora após o término fechou às ${hLim}:${mLim}.`,
+      };
+    }
+
+    return { liberado: true, motivo: 'Dentro do horário permitido!' };
+  }, [turmaAtual, minutosAgora, diaHoje]);
+
+  const noLocalCorreto =
+    distanciaStudio !== null && distanciaStudio <= RAIO_MAXIMO_METROS;
+
+  // Verifica se ESTE CELULAR ou ESTE BOLSISTA já marcou presença nesta atividade hoje
+  const chaveAtividadeHoje = turmaAtual ? `${hojeIso}_${turmaAtual.id}` : '';
+  const aparelhoJaUsadoNestaAtividade = todasPresencasHoje.some(
+    (p) =>
+      p.atividadeChave === chaveAtividadeHoje &&
+      p.deviceId === deviceId
+  );
+  const bolsistaJaMarcouNestaAtividade = todasPresencasHoje.some(
+    (p) =>
+      p.atividadeChave === chaveAtividadeHoje &&
+      p.bolsistaId === user?.uid
+  );
+
+  const podeConfirmarPresenca =
+    avaliacaoJanela.liberado &&
+    noLocalCorreto &&
+    !aparelhoJaUsadoNestaAtividade &&
+    !bolsistaJaMarcouNestaAtividade;
+
   const handleRegistrarPresenca = async (e) => {
     e.preventDefault();
-    if (!user?.uid) return;
+    if (!podeConfirmarPresenca || !turmaAtual || !user?.uid) return;
+
     setRegistrandoCheckin(true);
     try {
       await addDoc(collection(db, 'presencas_bolsistas'), {
         bolsistaId: user.uid,
         bolsistaNome: userData?.nome || 'Bolsista',
-        data: dataAtividade,
-        tipoAtividade,
-        descricao: descricaoAtividade.trim(),
+        cursoId: turmaAtual.id,
+        atividadeChave: chaveAtividadeHoje,
+        deviceId,
+        distanciaMetros: distanciaStudio,
+        data: hojeIso,
+        tipoAtividade: `Turma: ${turmaAtual.titulo}`,
+        descricao: `${turmaAtual.dataInfo} (${turmaAtual.horaInicio} às ${turmaAtual.horarioFim}) • GPS: ${distanciaStudio}m`,
         status: 'presente',
         lancadoPorId: user.uid,
-        lancadoPorNome: `${userData?.nome || 'Bolsista'} (Auto Check-in)`,
+        lancadoPorNome: `${userData?.nome || 'Bolsista'} (Check-in GPS Validado)`,
         criadoEm: new Date().toISOString(),
       });
-      setDescricaoAtividade('');
-      alert('✅ Presença registrada com sucesso!');
+
+      alert(
+        `✅ Presença confirmada na turma "${turmaAtual.titulo}" a ${distanciaStudio}m do Studio!`
+      );
       carregarDadosBolsista();
     } catch (err) {
       alert('Erro ao registrar presença: ' + err.message);
@@ -182,7 +493,6 @@ export default function PainelBolsista() {
         ).toFixed(1)
       : null;
 
-  // Médias por critério
   const calcMediaCriterio = (campo) => {
     if (avaliacoes.length === 0) return null;
     const soma = avaliacoes.reduce((acc, a) => acc + Number(a[campo] || 0), 0);
@@ -196,22 +506,6 @@ export default function PainelBolsista() {
     { label: 'Postura Técnica', valor: calcMediaCriterio('postura') },
   ];
 
-  // Insight motivacional/técnico para o bolsista
-  let feedbackBolsista =
-    'Continue registrando suas presenças nas atividades para acompanhar sua evolução no studio.';
-  if (mediaGeral !== null && taxaFrequencia !== null) {
-    if (Number(mediaGeral) >= 4.5 && taxaFrequencia >= 85) {
-      feedbackBolsista =
-        'Excelente ritmo! Sua assiduidade e postura estão entre os destaques da equipe de bolsistas.';
-    } else if (taxaFrequencia < 75) {
-      feedbackBolsista =
-        'Atenção à frequência: tente manter suas presenças acima de 80% nas monitorias e ensaios.';
-    } else {
-      feedbackBolsista =
-        'Bom progresso! Mantenha a constância nas turmas de apoio e nos ensaios técnicos.';
-    }
-  }
-
   const abas = [
     { id: 'visao_geral', label: 'Minha Bolsa & Check-in', icon: Award },
     { id: 'desempenho', label: 'Minhas Avaliações', icon: TrendingUp },
@@ -220,7 +514,6 @@ export default function PainelBolsista() {
 
   return (
     <div className="min-h-screen bg-[#F4F4F6] text-zinc-900">
-      {/* Cabeçalho Institucional */}
       <header className="bg-white border-b border-zinc-200 sticky top-0 z-30">
         <div className="h-1.5 bg-gradient-to-r from-[#4A041C] via-[#D81B60] to-[#4A041C]" />
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -240,8 +533,18 @@ export default function PainelBolsista() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <span className="hidden sm:inline text-xs font-semibold text-zinc-600">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {permissaoNotif !== 'granted' && (
+              <button
+                type="button"
+                onClick={solicitarPermissaoNotificacoes}
+                className="flex items-center gap-1.5 rounded-xl bg-amber-100 border border-amber-300 text-amber-900 px-3 py-2 text-xs font-bold hover:bg-amber-200 transition"
+              >
+                <Bell size={14} />
+                <span className="hidden sm:inline">Ativar Alertas</span>
+              </button>
+            )}
+            <span className="hidden md:inline text-xs font-semibold text-zinc-600">
               Olá, <strong>{userData?.nome}</strong>
             </span>
             <button
@@ -254,7 +557,6 @@ export default function PainelBolsista() {
           </div>
         </div>
 
-        {/* Navegação por Abas */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex gap-2 overflow-x-auto pb-3 pt-1">
           {abas.map((tab) => {
             const Icone = tab.icon;
@@ -284,9 +586,8 @@ export default function PainelBolsista() {
           </div>
         ) : abaAtiva === 'visao_geral' ? (
           <div className="space-y-6">
-            {/* Cards Superiores: Vigência + Frequência + Média */}
+            {/* Cards Superiores */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {/* Card Vigência */}
               <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm space-y-2.5">
                 <span className="text-[11px] font-bold uppercase text-cyan-800 flex items-center gap-1.5">
                   <Clock size={15} className="text-cyan-600" /> Vigência da Bolsa
@@ -320,22 +621,20 @@ export default function PainelBolsista() {
                 )}
               </div>
 
-              {/* Card Taxa de Presença */}
               <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm flex flex-col justify-between">
                 <span className="text-[11px] font-bold uppercase text-emerald-800 flex items-center gap-1.5">
-                  <UserCheck size={15} className="text-emerald-600" /> Frequência em Atividades
+                  <UserCheck size={15} className="text-emerald-600" /> Frequência Registrada
                 </span>
                 <div className="my-2">
                   <strong className="text-3xl font-condensed text-emerald-900">
                     {taxaFrequencia !== null ? `${taxaFrequencia}%` : '—'}
                   </strong>
                   <span className="block text-xs text-zinc-500">
-                    {qtdPresente} presença(s) em {presencas.length} atividade(s)
+                    {qtdPresente} presença(s) validada(s)
                   </span>
                 </div>
               </div>
 
-              {/* Card Média Geral */}
               <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm flex flex-col justify-between">
                 <span className="text-[11px] font-bold uppercase text-[#D81B60] flex items-center gap-1.5">
                   <Sparkles size={15} /> Índice de Desempenho
@@ -345,79 +644,118 @@ export default function PainelBolsista() {
                     {mediaGeral !== null ? `${mediaGeral} / 5.0` : 'Aguardando'}
                   </strong>
                   <span className="block text-xs text-zinc-500">
-                    Baseado em {avaliacoes.length} avaliação(ões) técnica(s)
+                    {avaliacoes.length} avaliação(ões) técnica(s)
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Banner de Insight */}
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-[#4A041C] to-[#7A0930] text-white flex items-center gap-3 shadow-sm">
-              <TrendingUp size={22} className="text-pink-300 shrink-0" />
-              <p className="text-xs sm:text-sm font-medium">{feedbackBolsista}</p>
-            </div>
-
-            {/* Grid: Formulário de Check-in + Lista de Presenças */}
+            {/* Grid: Check-in Geolocalizado + Histórico */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-3">
-                <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
-                  <CheckSquare size={18} className="text-[#D81B60]" /> Registrar Minha Presença
-                </h3>
-                <p className="text-xs text-zinc-500">
-                  Informe a atividade cumprida hoje no studio para compor sua folha de frequência.
-                </p>
+              <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+                    <CheckSquare size={18} className="text-[#D81B60]" /> Check-in Presencial (GPS)
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={verificarLocalizacaoAtual}
+                    className="text-xs font-bold text-[#D81B60] flex items-center gap-1 hover:underline"
+                  >
+                    <RefreshCw size={12} className={buscandoGps ? 'animate-spin' : ''} />
+                    Atualizar GPS
+                  </button>
+                </div>
+
+                {/* Status da Cerca Virtual (Estr. das Placas, 1909) */}
+                <div
+                  className={`p-3 rounded-xl border text-xs space-y-1 ${
+                    noLocalCorreto
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-amber-50 border-amber-300 text-amber-950'
+                  }`}
+                >
+                  <p className="font-bold flex items-center gap-1.5">
+                    <MapPin size={15} />
+                    {buscandoGps
+                      ? 'Verificando sua localização...'
+                      : erroGps
+                      ? erroGps
+                      : noLocalCorreto
+                      ? `No Studio No Compasso (${distanciaStudio}m do salão)`
+                      : `Fora do Studio (${distanciaStudio ?? '?'}m de distância)`}
+                  </p>
+                  <p className="text-[11px] opacity-85">
+                    Local exigido: Estr. das Placas, 1909 - Raimundo Melo (até {RAIO_MAXIMO_METROS}m).
+                  </p>
+                </div>
 
                 <form onSubmit={handleRegistrarPresenca} className="space-y-3">
                   <div>
                     <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      Data da Atividade
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      value={dataAtividade}
-                      onChange={(e) => setDataAtividade(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      Tipo de Atividade
+                      Turma Cadastrada
                     </label>
                     <select
-                      value={tipoAtividade}
-                      onChange={(e) => setTipoAtividade(e.target.value)}
+                      value={turmaSelecionadaId}
+                      onChange={(e) => setTurmaSelecionadaId(e.target.value)}
                       className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold"
                     >
-                      <option value="Apoio em Turma">Apoio / Monitoria em Turma</option>
-                      <option value="Treino / Ensaio Técnico">Treino / Ensaio Técnico</option>
-                      <option value="Baile / Evento do Studio">Baile / Evento do Studio</option>
-                      <option value="Recepção / Organização">Recepção / Organização</option>
+                      {minhasTurmas.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.titulo} ({t.dataInfo} • {t.horaInicio} às {t.horarioFim})
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      Descrição Breve (Turma ou Horário)
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Turma de Forró Iniciante - 19h30"
-                      value={descricaoAtividade}
-                      onChange={(e) => setDescricaoAtividade(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                    />
+                  {/* Status da Janela de Horário */}
+                  <div
+                    className={`p-3 rounded-xl border text-xs ${
+                      avaliacaoJanela.liberado
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                        : 'bg-zinc-100 border-zinc-300 text-zinc-700'
+                    }`}
+                  >
+                    <p className="font-bold flex items-center gap-1.5">
+                      <Clock size={14} /> {avaliacaoJanela.motivo}
+                    </p>
                   </div>
+
+                  {/* Alerta de Trava por Aparelho */}
+                  {aparelhoJaUsadoNestaAtividade && (
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-300 text-xs text-red-800 font-bold flex items-start gap-2">
+                      <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                      <span>
+                        Este celular já registrou uma presença para esta turma hoje. Não é permitido registrar mais de uma pessoa no mesmo aparelho.
+                      </span>
+                    </div>
+                  )}
+
+                  {bolsistaJaMarcouNestaAtividade && !aparelhoJaUsadoNestaAtividade && (
+                    <div className="p-3 rounded-xl bg-emerald-100 border border-emerald-300 text-xs text-emerald-900 font-bold">
+                      ✅ Você já registrou sua presença nesta turma hoje!
+                    </div>
+                  )}
 
                   <button
                     type="submit"
-                    disabled={registrandoCheckin}
-                    className="w-full rounded-xl bg-[#D81B60] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#AD1457] transition"
+                    disabled={!podeConfirmarPresenca || registrandoCheckin}
+                    className={`w-full rounded-xl py-3 text-xs font-bold uppercase tracking-wider text-white transition ${
+                      podeConfirmarPresenca
+                        ? 'bg-[#D81B60] hover:bg-[#AD1457] shadow-md'
+                        : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                    }`}
                   >
-                    {registrandoCheckin ? 'Registrando...' : 'Confirmar Presença'}
+                    {registrandoCheckin
+                      ? 'Validando GPS e Horário...'
+                      : podeConfirmarPresenca
+                      ? 'Confirmar Presença Agora'
+                      : 'Check-in Bloqueado (Verifique Local/Horário)'}
                   </button>
+
+                  <p className="text-[10px] text-zinc-400 flex items-center gap-1 justify-center">
+                    <ShieldCheck size={12} /> Validação antifraude ativa • ID Aparelho: {deviceId.slice(0, 12)}...
+                  </p>
                 </form>
               </div>
 
@@ -428,10 +766,10 @@ export default function PainelBolsista() {
 
                 {presencas.length === 0 ? (
                   <p className="text-sm text-zinc-400 py-8 text-center">
-                    Nenhuma presença registrada ainda. Use o formulário ao lado para fazer seu primeiro check-in.
+                    Nenhuma presença registrada ainda.
                   </p>
                 ) : (
-                  <div className="space-y-2.5 max-h-[420px] overflow-y-auto">
+                  <div className="space-y-2.5 max-h-[440px] overflow-y-auto">
                     {presencas.map((pr) => (
                       <div
                         key={pr.id}
@@ -446,7 +784,7 @@ export default function PainelBolsista() {
                             {pr.descricao ? `• ${pr.descricao}` : ''}
                           </p>
                           <span className="text-[10px] text-zinc-400">
-                            Registro: {pr.lancadoPorNome}
+                            {pr.lancadoPorNome}
                           </span>
                         </div>
                         <span
@@ -469,7 +807,6 @@ export default function PainelBolsista() {
           </div>
         ) : abaAtiva === 'desempenho' ? (
           <div className="space-y-6">
-            {/* Médias por Critério */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {mediasCriterios.map((c) => (
                 <div
@@ -486,7 +823,6 @@ export default function PainelBolsista() {
               ))}
             </div>
 
-            {/* Lista de Avaliações (SEM exibir anotacaoRestritaAdmin) */}
             <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
               <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C]">
                 Histórico de Avaliações Técnicas ({avaliacoes.length})
@@ -494,7 +830,7 @@ export default function PainelBolsista() {
 
               {avaliacoes.length === 0 ? (
                 <p className="text-sm text-zinc-400 py-8 text-center">
-                  Você ainda não possui avaliações registradas pelos professores ou coordenação.
+                  Você ainda não possui avaliações registradas.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -541,17 +877,16 @@ export default function PainelBolsista() {
             </div>
           </div>
         ) : (
-          /* ABA 3: TURMAS & SEGURANÇA DA CONTA */
           <div className="space-y-6">
             <SegurancaSenhaCard />
 
             <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
               <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
-                <Calendar size={18} className="text-[#D81B60]" /> Turmas & Horários do Studio ({cursos.length})
+                <Calendar size={18} className="text-[#D81B60]" /> Minhas Turmas Vinculadas ({minhasTurmas.length})
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {cursos.map((c) => (
+                {minhasTurmas.map((c) => (
                   <div
                     key={c.id}
                     className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-1"
