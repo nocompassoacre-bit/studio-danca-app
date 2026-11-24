@@ -21,11 +21,13 @@ import {
   MapPin,
   Ticket,
   UserCheck,
+  CreditCard,
+  AlertTriangle,
+  LogOut,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
 
-// Mapeia dias da semana para detectar automaticamente se há aula hoje
 const DIAS_SEMANA_MAP = [
   { idx: 0, chaves: ['dom', 'domingo'] },
   { idx: 1, chaves: ['seg', 'segunda'] },
@@ -65,7 +67,6 @@ function verificarAulaProximaHoje(curso, agora) {
 
   const diffMinutos = Math.round((inicioHoje.getTime() - agora.getTime()) / 60000);
 
-  // Alerta se faltar entre 0 e 90 minutos para começar, ou se já estiver em andamento
   if (diffMinutos >= 0 && diffMinutos <= 90) {
     return {
       status: 'em_breve',
@@ -92,23 +93,40 @@ function verificarAulaProximaHoje(curso, agora) {
   };
 }
 
+function calcularProximoVencimento(diaVencimentoPadrao = 5) {
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const dia = Number(diaVencimentoPadrao) || 5;
+
+  let alvo = new Date(hoje.getFullYear(), hoje.getMonth(), dia);
+  if (alvo < hoje) {
+    alvo = new Date(hoje.getFullYear(), hoje.getMonth() + 1, dia);
+  }
+  const diffDias = Math.ceil((alvo.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+  return {
+    dataIso: alvo.toISOString().split('T')[0],
+    dataBr: alvo.toLocaleDateString('pt-BR'),
+    diffDias,
+  };
+}
+
 export default function PainelAluno() {
-  const { user, userData } = useAuth();
+  const { user, userData, logout } = useAuth();
   const [abaAtiva, setAbaAtiva] = useState('turmas'); // 'turmas' | 'novidades' | 'fale_conosco'
   const [carregando, setCarregando] = useState(true);
 
   const [minhasMatriculas, setMinhasMatriculas] = useState([]);
   const [todosCursos, setTodosCursos] = useState([]);
   const [todosEventos, setTodosEventos] = useState([]);
+  const [meuFinanceiro, setMeuFinanceiro] = useState([]);
   const [minhasMensagens, setMinhasMensagens] = useState([]);
 
-  // Relógio em tempo real para avisos de aula
   const [agora, setAgora] = useState(new Date());
   const [permissaoNotif, setPermissaoNotif] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
 
-  // Estados do formulário Fale Conosco
+  // Formulário Fale Conosco
   const [cursoMensagemId, setCursoMensagemId] = useState('');
   const [assuntoMensagem, setAssuntoMensagem] = useState('Dúvida sobre a aula / passos');
   const [textoMensagem, setTextoMensagem] = useState('');
@@ -123,42 +141,29 @@ export default function PainelAluno() {
     if (!user?.uid) return;
     setCarregando(true);
     try {
-      const [matSnap, cursosSnap, eventosSnap, msgsSnap] = await Promise.all([
-        getDocs(
-          query(
-            collection(db, 'matriculas'),
-            where('alunoId', '==', user.uid)
-          )
-        ),
+      const [matSnap, cursosSnap, eventosSnap, finSnap, msgsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'matriculas'), where('alunoId', '==', user.uid))),
         getDocs(collection(db, 'cursos')),
         getDocs(collection(db, 'eventos')),
-        getDocs(
-          query(
-            collection(db, 'mensagens_alunos'),
-            where('alunoId', '==', user.uid)
-          )
-        ),
+        getDocs(query(collection(db, 'financeiro'), where('alunoId', '==', user.uid))),
+        getDocs(query(collection(db, 'mensagens'), where('remetenteId', '==', user.uid))),
       ]);
 
       const mats = matSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((m) => m.status !== 'cancelada');
 
-      const cursosLista = cursosSnap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      }));
-      const eventosLista = eventosSnap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      }));
+      const cursosLista = cursosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const eventosLista = eventosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const finLista = finSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const msgsLista = msgsSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+        .sort((a, b) => (b.dataEnvio || '').localeCompare(a.dataEnvio || ''));
 
       setMinhasMatriculas(mats);
       setTodosCursos(cursosLista);
       setTodosEventos(eventosLista);
+      setMeuFinanceiro(finLista);
       setMinhasMensagens(msgsLista);
 
       if (mats.length > 0 && !cursoMensagemId) {
@@ -175,23 +180,103 @@ export default function PainelAluno() {
     carregarDadosAluno();
   }, [user?.uid]);
 
-  // Cruza matrículas com dados completos dos cursos
+  // Cruza matrículas com cursos e indicadores de mensalidade
   const turmasMatriculadas = useMemo(() => {
+    const hojeIso = new Date().toISOString().split('T')[0];
+
     return minhasMatriculas
       .map((mat) => {
         const cursoObj = todosCursos.find((c) => c.id === mat.cursoId);
         if (!cursoObj) return null;
+
+        const diaVenc = Number(cursoObj.diaVencimento) || 5;
+        const proxVenc = calcularProximoVencimento(diaVenc);
+
+        const lancamentosTurma = meuFinanceiro.filter(
+          (f) => f.cursoId === cursoObj.id && f.tipo === 'receita' && f.status !== 'estornado'
+        );
+        const pagasList = lancamentosTurma.filter((f) => f.status === 'pago');
+        const pendentesList = lancamentosTurma.filter((f) => f.status === 'pendente');
+
+        // Verifica quantas pendentes estão vencidas ou a vencer nos próximos 7 dias
+        const emAlerta = pendentesList.filter((p) => {
+          if (!p.dataVencimento) return true;
+          const diff = Math.ceil(
+            (new Date(p.dataVencimento + 'T00:00:00') - new Date(hojeIso + 'T00:00:00')) /
+              (1000 * 60 * 60 * 24)
+          );
+          return diff <= 7;
+        });
+
+        const isBolsistaNaTurma =
+          mat.roleParticipante === 'bolsista' ||
+          (Array.isArray(userData?.roles) && userData.roles.includes('bolsista'));
+
         return {
           ...cursoObj,
           matriculaId: mat.id,
           dataMatricula: mat.dataMatricula,
+          diaVencimento: diaVenc,
+          proximoVencimento: proxVenc,
+          qtdPagas: pagasList.length,
+          qtdPendentes: pendentesList.length,
+          qtdPertoVencer: emAlerta.length,
+          isBolsistaNaTurma,
           alertaHoje: verificarAulaProximaHoje(cursoObj, agora),
         };
       })
       .filter(Boolean);
-  }, [minhasMatriculas, todosCursos, agora]);
+  }, [minhasMatriculas, todosCursos, meuFinanceiro, userData, agora]);
 
-  // Notificações ativas de aulas prestes a começar
+  // Resumo Financeiro Consolidado do Aluno
+  const resumoMensalidades = useMemo(() => {
+    const totalPagas = meuFinanceiro.filter(
+      (f) => f.tipo === 'receita' && f.status === 'pago'
+    ).length;
+
+    const pendentes = meuFinanceiro.filter(
+      (f) => f.tipo === 'receita' && f.status === 'pendente'
+    );
+
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
+    const pertoDeVencer = pendentes.filter((p) => {
+      if (!p.dataVencimento) return true;
+      const venc = new Date(p.dataVencimento + 'T00:00:00');
+      const diffDias = Math.ceil((venc.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDias <= 7; // Inclui vencidas e a vencer em até 7 dias
+    });
+
+    // Caso ainda não haja fatura pendente lançada manualmente, verifica se o dia de vencimento da turma está próximo (<= 7 dias)
+    const turmasPagantesProximas = turmasMatriculadas.filter(
+      (t) =>
+        !t.isBolsistaNaTurma &&
+        Number(t.valor || 0) > 0 &&
+        t.qtdPendentes === 0 &&
+        t.proximoVencimento.diffDias <= 7
+    );
+
+    return {
+      totalPagas,
+      qtdPertoVencer: pertoDeVencer.length + turmasPagantesProximas.length,
+      listaAlertas: [
+        ...pertoDeVencer.map((p) => ({
+          id: p.id,
+          titulo: p.observacao || 'Mensalidade',
+          dataBr: p.dataVencimento ? p.dataVencimento.split('-').reverse().join('/') : 'Dia 05',
+          valor: Number(p.valor || 0),
+        })),
+        ...turmasPagantesProximas.map((t) => ({
+          id: `prev_${t.id}`,
+          titulo: `Mensalidade — ${t.titulo}`,
+          dataBr: t.proximoVencimento.dataBr,
+          valor: Number(t.valor || 0),
+        })),
+      ],
+    };
+  }, [meuFinanceiro, turmasMatriculadas]);
+
   const alertasAulaComecando = useMemo(() => {
     return turmasMatriculadas.filter(
       (t) =>
@@ -200,7 +285,6 @@ export default function PainelAluno() {
     );
   }, [turmasMatriculadas]);
 
-  // Atividades novas disponíveis para inscrição (cursos que o aluno ainda não faz + eventos públicos)
   const novasAtividades = useMemo(() => {
     const idsMatriculados = new Set(minhasMatriculas.map((m) => m.cursoId));
 
@@ -254,6 +338,7 @@ export default function PainelAluno() {
     }
   };
 
+  // Grava na coleção 'mensagens' exatamente no formato lido pelo PainelProfessor.jsx
   const handleEnviarMensagemProfessor = async (e) => {
     e.preventDefault();
     if (!textoMensagem.trim()) return;
@@ -266,19 +351,19 @@ export default function PainelAluno() {
 
     setEnviandoMsg(true);
     try {
-      await addDoc(collection(db, 'mensagens_alunos'), {
-        alunoId: user.uid,
-        alunoNome: userData?.nome || user.email,
-        alunoTelefone: userData?.telefone || '',
+      await addDoc(collection(db, 'mensagens'), {
+        remetenteId: user.uid,
+        remetenteNome: userData?.nome || user.email,
+        remetenteTelefone: userData?.telefone || '',
+        destinatarioId: turmaAlvo.profId || '',
+        destinatarioNome: turmaAlvo.professoresNomes || 'Professor(a)',
         cursoId: turmaAlvo.id,
         cursoTitulo: turmaAlvo.titulo,
-        profId: turmaAlvo.profId || '',
-        profNome: turmaAlvo.professoresNomes || 'Professor(a) da Turma',
         assunto: assuntoMensagem,
-        mensagem: textoMensagem.trim(),
-        status: 'enviada',
-        respostaProf: '',
-        criadoEm: new Date().toISOString(),
+        texto: `[${assuntoMensagem}] ${textoMensagem.trim()}`,
+        lida: false,
+        resposta: '',
+        dataEnvio: new Date().toISOString(),
       });
 
       setTextoMensagem('');
@@ -293,431 +378,542 @@ export default function PainelAluno() {
     }
   };
 
-  if (carregando) {
-    return (
-      <div className="p-10 text-center text-sm text-zinc-500">
-        Carregando seu painel do aluno...
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* CABEÇALHO DE BOAS-VINDAS */}
-      <div className="bg-gradient-to-r from-[#4A041C] to-[#D81B60] rounded-3xl p-6 sm:p-8 text-white shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <span className="inline-block px-3 py-1 rounded-full bg-white/15 text-[11px] font-bold uppercase tracking-wider mb-2">
-            Área do Aluno • No Compasso
-          </span>
-          <h2 className="text-2xl sm:text-3xl font-bold font-condensed uppercase">
-            Olá, {userData?.nome?.split(' ')[0] || 'Dançarino(a)'}!
-          </h2>
-          <p className="text-xs sm:text-sm text-pink-100 mt-1">
-            Acompanhe seus dias de aula, novidades do estúdio e fale direto com seus professores.
-          </p>
-        </div>
+    <div className="min-h-screen bg-[#F4F4F6] text-zinc-900 pb-12">
+      {/* BARRA SUPERIOR DO ALUNO */}
+      <header className="bg-white border-b border-zinc-200 sticky top-0 z-30 shadow-xs">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src="/logo-studio.png" alt="No Compasso" className="h-10 w-10 object-contain" />
+            <div>
+              <span className="block text-[10px] font-bold uppercase tracking-widest text-[#D81B60]">
+                Área do Aluno • No Compasso
+              </span>
+              <h1 className="text-base sm:text-lg font-bold uppercase font-condensed text-[#4A041C]">
+                No Compasso Studio de Dança
+              </h1>
+            </div>
+          </div>
 
-        {permissaoNotif !== 'granted' && (
-          <button
-            type="button"
-            onClick={ativarNotificacoesNavegador}
-            className="inline-flex items-center gap-2 rounded-xl bg-white text-[#4A041C] px-4 py-2.5 text-xs font-bold uppercase tracking-wider hover:bg-pink-50 transition shrink-0 shadow"
-          >
-            <Bell size={16} className="text-[#D81B60]" />
-            Ativar Alertas de Aula
-          </button>
-        )}
-      </div>
-
-      {/* BANNER DE NOTIFICAÇÃO QUANDO A AULA JÁ VAI COMEÇAR */}
-      {alertasAulaComecando.length > 0 && (
-        <div className="space-y-2">
-          {alertasAulaComecando.map((alertaTurma) => (
-            <div
-              key={alertaTurma.id}
-              className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-400 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-pulse"
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:inline text-xs font-semibold text-zinc-600">
+              Olá, <strong>{userData?.nome?.split(' ')[0] || 'Aluno(a)'}</strong>
+            </span>
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-zinc-300 text-xs font-bold uppercase text-zinc-700 hover:bg-zinc-100"
             >
-              <div className="flex items-start gap-3">
-                <div className="p-2.5 rounded-xl bg-amber-400 text-amber-950 shrink-0">
-                  <BellRing size={22} />
-                </div>
+              <LogOut size={14} /> Sair
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+        {carregando ? (
+          <div className="p-10 text-center text-sm text-zinc-500">
+            Carregando seu painel do aluno...
+          </div>
+        ) : (
+          <>
+            {/* BANNER DE BOAS-VINDAS + INDICADORES DE MENSALIDADE */}
+            <div className="bg-gradient-to-r from-[#4A041C] to-[#D81B60] rounded-3xl p-6 sm:p-8 text-white shadow-lg space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                    Lembrete de Aula Hoje
+                  <span className="inline-block px-3 py-1 rounded-full bg-white/15 text-[11px] font-bold uppercase tracking-wider mb-2">
+                    Portal do Aluno
                   </span>
-                  <h3 className="text-base font-bold text-amber-950">
-                    {alertaTurma.titulo} — {alertaTurma.alertaHoje.texto}
-                  </h3>
-                  <p className="text-xs text-amber-900">
-                    Prof. {alertaTurma.professoresNomes} • Local: No Compasso Studio de Dança
+                  <h2 className="text-2xl sm:text-3xl font-bold font-condensed uppercase">
+                    Olá, {userData?.nome?.split(' ')[0] || 'Dançarino(a)'}!
+                  </h2>
+                  <p className="text-xs sm:text-sm text-pink-100 mt-1">
+                    Acompanhe seus dias de aula, mensalidades, novidades e fale com seus professores.
                   </p>
                 </div>
+
+                {permissaoNotif !== 'granted' && (
+                  <button
+                    type="button"
+                    onClick={ativarNotificacoesNavegador}
+                    className="inline-flex items-center gap-2 rounded-xl bg-white text-[#4A041C] px-4 py-2.5 text-xs font-bold uppercase tracking-wider hover:bg-pink-50 transition shrink-0 shadow"
+                  >
+                    <Bell size={16} className="text-[#D81B60]" />
+                    Ativar Alertas de Aula
+                  </button>
+                )}
               </div>
-              <span className="px-3 py-1.5 rounded-xl bg-amber-950 text-white text-xs font-bold uppercase self-start sm:self-center">
-                {alertaTurma.horaInicio} às {alertaTurma.horarioFim || '21:00'}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
 
-      {/* NAVEGAÇÃO SIMPLIFICADA EM 3 ABAS */}
-      <div className="flex flex-wrap gap-2 bg-white p-2 rounded-2xl border border-zinc-200 shadow-sm">
-        <button
-          type="button"
-          onClick={() => setAbaAtiva('turmas')}
-          className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase transition ${
-            abaAtiva === 'turmas'
-              ? 'bg-[#4A041C] text-white shadow'
-              : 'text-zinc-600 hover:bg-zinc-100'
-          }`}
-        >
-          <BookOpen size={16} />
-          Minhas Turmas ({turmasMatriculadas.length})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setAbaAtiva('novidades')}
-          className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase transition ${
-            abaAtiva === 'novidades'
-              ? 'bg-[#D81B60] text-white shadow'
-              : 'text-zinc-600 hover:bg-zinc-100'
-          }`}
-        >
-          <Sparkles size={16} />
-          Novas Atividades ({novasAtividades.length})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setAbaAtiva('fale_conosco')}
-          className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase transition ${
-            abaAtiva === 'fale_conosco'
-              ? 'bg-[#4A041C] text-white shadow'
-              : 'text-zinc-600 hover:bg-zinc-100'
-          }`}
-        >
-          <MessageSquare size={16} />
-          Fale Conosco
-        </button>
-      </div>
-
-      {/* ===================================================================== */}
-      {/* ABA 1: MINHAS TURMAS MATRICULADAS & DIAS DE AULA                      */}
-      {/* ===================================================================== */}
-      {abaAtiva === 'turmas' && (
-        <div className="space-y-4">
-          {turmasMatriculadas.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-zinc-200 p-8 text-center space-y-3">
-              <p className="text-sm font-semibold text-zinc-700">
-                Você ainda não possui matrícula vinculada a nenhuma turma ativa.
-              </p>
-              <button
-                type="button"
-                onClick={() => setAbaAtiva('novidades')}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] px-5 py-2.5 text-xs font-bold uppercase text-white hover:bg-[#AD1457]"
-              >
-                <Sparkles size={15} /> Ver Turmas & Atividades Abertas
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {turmasMatriculadas.map((turma) => (
-                <div
-                  key={turma.id}
-                  className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col justify-between"
-                >
+              {/* CARDS RESUMO: MENSALIDADES PAGAS vs PERTO DE VENCER */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                <div className="bg-white/10 backdrop-blur-xs border border-white/20 rounded-2xl p-4 flex items-center justify-between">
                   <div>
-                    {turma.cardUrl && (
-                      <img
-                        src={turma.cardUrl}
-                        alt={turma.titulo}
-                        className="w-full h-36 object-cover"
-                      />
-                    )}
-                    <div className="p-5 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="px-2.5 py-0.5 rounded bg-[#4A041C] text-white text-[10px] font-bold uppercase">
-                          {turma.frente || 'Dança de Salão'} • {turma.estilo}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                          <CheckCircle2 size={12} /> Matriculado
-                        </span>
-                      </div>
-
-                      <h3 className="text-xl font-bold font-condensed uppercase text-zinc-900">
-                        {turma.titulo}
-                      </h3>
-
-                      <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2 text-xs">
-                        <p className="flex items-center gap-2 font-bold text-[#4A041C]">
-                          <Calendar size={15} className="text-[#D81B60]" />
-                          Dias de Aula: <span className="text-zinc-900">{turma.dataInfo}</span>
-                        </p>
-                        <p className="flex items-center gap-2 font-bold text-[#4A041C]">
-                          <Clock size={15} className="text-[#D81B60]" />
-                          Horário:{' '}
-                          <span className="text-zinc-900">
-                            {turma.horaInicio || '19:00'} às {turma.horarioFim || '21:00'}
-                          </span>
-                        </p>
-                        <p className="flex items-center gap-2 text-zinc-600">
-                          <UserCheck size={15} className="text-[#D81B60]" />
-                          Professor(a): <strong>{turma.professoresNomes}</strong>
-                        </p>
-                      </div>
-
-                      {turma.alertaHoje && (
-                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-xs font-bold text-amber-900 flex items-center gap-2">
-                          <BellRing size={15} className="text-amber-600 shrink-0" />
-                          <span>{turma.alertaHoje.texto}</span>
-                        </div>
-                      )}
-                    </div>
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-pink-100">
+                      Mensalidades / Parcelas Pagas
+                    </span>
+                    <strong className="text-2xl font-bold font-condensed text-emerald-300">
+                      {resumoMensalidades.totalPagas} paga(s)
+                    </strong>
                   </div>
-
-                  <div className="px-5 pb-5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCursoMensagemId(turma.id);
-                        setAbaAtiva('fale_conosco');
-                      }}
-                      className="w-full flex items-center justify-center gap-2 rounded-xl border border-zinc-300 py-2.5 text-xs font-bold uppercase text-zinc-700 hover:bg-[#4A041C] hover:text-white transition"
-                    >
-                      <MessageSquare size={14} />
-                      Enviar Mensagem para {turma.professoresNomes?.split(' ')[0] || 'Prof.'}
-                    </button>
-                  </div>
+                  <CheckCircle2 size={28} className="text-emerald-300 opacity-90" />
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
-      {/* ===================================================================== */}
-      {/* ABA 2: ANÚNCIOS DE NOVAS ATIVIDADES & INSCRIÇÃO                       */}
-      {/* ===================================================================== */}
-      {abaAtiva === 'novidades' && (
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm">
-            <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C]">
-              Novos Cursos, Workshops & Bailes do Studio
-            </h3>
-            <p className="text-xs text-zinc-500">
-              Garanta sua vaga ou ingresso diretamente pelo link oficial de inscrição.
-            </p>
-          </div>
-
-          {novasAtividades.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-zinc-200 p-8 text-center text-sm text-zinc-500">
-              Nenhuma nova atividade extra anunciada no momento. Fique de olho por aqui!
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {novasAtividades.map((ativ) => (
-                <div
-                  key={ativ.id}
-                  className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col justify-between"
-                >
+                <div className="bg-white/10 backdrop-blur-xs border border-white/20 rounded-2xl p-4 flex items-center justify-between">
                   <div>
-                    {ativ.cardUrl && (
-                      <img
-                        src={ativ.cardUrl}
-                        alt={ativ.titulo}
-                        className="w-full h-44 object-cover"
-                      />
-                    )}
-                    <div className="p-5 space-y-2.5">
-                      <span
-                        className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold uppercase text-white ${
-                          ativ.categoriaItem === 'evento' ? 'bg-[#D81B60]' : 'bg-[#4A041C]'
-                        }`}
-                      >
-                        {ativ.badge}
-                      </span>
-
-                      <h4 className="text-xl font-bold font-condensed uppercase text-zinc-900">
-                        {ativ.titulo}
-                      </h4>
-
-                      <p className="text-xs text-zinc-600 flex items-center gap-1.5">
-                        {ativ.categoriaItem === 'evento' ? (
-                          <MapPin size={14} className="text-[#D81B60]" />
-                        ) : (
-                          <Calendar size={14} className="text-[#D81B60]" />
-                        )}
-                        {ativ.subtituloData}
-                      </p>
-
-                      {(ativ.ementa || ativ.descricao) && (
-                        <p className="text-xs text-zinc-500 line-clamp-3">
-                          {ativ.ementa || ativ.descricao}
-                        </p>
-                      )}
-                    </div>
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-pink-100">
+                      Mensalidades Perto de Vencer
+                    </span>
+                    <strong className="text-2xl font-bold font-condensed text-amber-300">
+                      {resumoMensalidades.qtdPertoVencer} alerta(s)
+                    </strong>
                   </div>
+                  <CreditCard size={28} className="text-amber-300 opacity-90" />
+                </div>
+              </div>
+            </div>
 
-                  <div className="p-5 pt-0 flex items-center justify-between gap-3">
-                    <div>
-                      <span className="block text-[10px] uppercase font-bold text-zinc-400">
-                        Investimento
-                      </span>
-                      <strong className="text-base font-bold text-[#4A041C]">
-                        {ativ.valorExibicao === 0
-                          ? 'Gratuito'
-                          : `R$ ${ativ.valorExibicao.toFixed(2).replace('.', ',')}`}
+            {/* ALERTA DE MENSALIDADES PRÓXIMAS DO VENCIMENTO */}
+            {resumoMensalidades.listaAlertas.length > 0 && (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase text-amber-950">
+                  <AlertTriangle size={16} className="text-amber-600" />
+                  Atenção ao Vencimento da(s) Mensalidade(s)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {resumoMensalidades.listaAlertas.map((al) => (
+                    <div
+                      key={al.id}
+                      className="p-2.5 rounded-xl bg-white border border-amber-200 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <strong className="text-zinc-900 block">{al.titulo}</strong>
+                        <span className="text-amber-800 font-semibold">
+                          Vencimento: {al.dataBr}
+                        </span>
+                      </div>
+                      <strong className="text-[#4A041C] text-sm">
+                        R$ {al.valor.toFixed(2).replace('.', ',')}
                       </strong>
                     </div>
-
-                    <Link
-                      to={`/inscricao/${ativ.categoriaItem}/${ativ.id}`}
-                      className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-4 py-2.5 text-xs font-bold uppercase text-white shadow-sm transition"
-                    >
-                      {ativ.categoriaItem === 'evento' ? (
-                        <>
-                          <Ticket size={15} /> Comprar Ingresso
-                        </>
-                      ) : (
-                        <>
-                          Inscrever-se <ExternalLink size={14} />
-                        </>
-                      )}
-                    </Link>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* ABA 3: FALE CONOSCO (MENSAGEM DIRETA PARA O PROFESSOR DA TURMA)       */}
-      {/* ===================================================================== */}
-      {abaAtiva === 'fale_conosco' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
-            <div className="flex items-center gap-2 text-[#4A041C]">
-              <MessageSquare size={20} className="text-[#D81B60]" />
-              <h3 className="text-lg font-bold uppercase font-condensed">
-                Fale com o Professor da Sua Turma
-              </h3>
-            </div>
-
-            {turmasMatriculadas.length === 0 ? (
-              <p className="text-xs text-zinc-500">
-                Você precisa estar matriculado em uma turma para enviar mensagens diretas ao professor responsável.
-              </p>
-            ) : (
-              <form onSubmit={handleEnviarMensagemProfessor} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Selecione sua Turma
-                  </label>
-                  <select
-                    value={cursoMensagemId}
-                    onChange={(e) => setCursoMensagemId(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
-                  >
-                    {turmasMatriculadas.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.titulo} — Prof. {t.professoresNomes}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Assunto
-                  </label>
-                  <select
-                    value={assuntoMensagem}
-                    onChange={(e) => setAssuntoMensagem(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
-                  >
-                    <option value="Dúvida sobre a aula / passos">Dúvida sobre a aula / passos</option>
-                    <option value="Aviso de ausência / atraso">Aviso de ausência / atraso</option>
-                    <option value="Ensaios / Coreografia">Ensaios / Coreografia</option>
-                    <option value="Outro assunto">Outro assunto</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Mensagem para o Professor
-                  </label>
-                  <textarea
-                    rows="4"
-                    required
-                    placeholder="Escreva sua dúvida ou recado aqui..."
-                    value={textoMensagem}
-                    onChange={(e) => setTextoMensagem(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-3 text-sm text-zinc-900"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={enviandoMsg}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] py-3 text-xs font-bold uppercase tracking-wider text-white transition shadow"
-                >
-                  <Send size={15} />
-                  {enviandoMsg ? 'Enviando...' : 'Enviar Mensagem ao Professor'}
-                </button>
-              </form>
+              </div>
             )}
-          </div>
 
-          {/* HISTÓRICO DE MENSAGENS ENVIADAS */}
-          <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
-            <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900">
-              Mensagens Enviadas ({minhasMensagens.length})
-            </h3>
-
-            {minhasMensagens.length === 0 ? (
-              <p className="text-xs text-zinc-400 py-8 text-center">
-                Você ainda não enviou nenhuma mensagem aos professores.
-              </p>
-            ) : (
-              <div className="space-y-3 max-h-[460px] overflow-y-auto">
-                {minhasMensagens.map((msg) => (
+            {/* BANNER DE NOTIFICAÇÃO QUANDO A AULA JÁ VAI COMEÇAR */}
+            {alertasAulaComecando.length > 0 && (
+              <div className="space-y-2">
+                {alertasAulaComecando.map((alertaTurma) => (
                   <div
-                    key={msg.id}
-                    className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2 text-xs"
+                    key={alertaTurma.id}
+                    className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-400 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-pulse"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-[#4A041C]">{msg.cursoTitulo}</span>
-                      <span className="text-[10px] text-zinc-400">
-                        {msg.criadoEm
-                          ? new Date(msg.criadoEm).toLocaleDateString('pt-BR')
-                          : ''}
-                      </span>
-                    </div>
-                    <p className="text-[11px] font-semibold text-[#D81B60]">
-                      Para: Prof. {msg.profNome} • {msg.assunto}
-                    </p>
-                    <p className="text-zinc-800 bg-white p-2.5 rounded-lg border border-zinc-200">
-                      {msg.mensagem}
-                    </p>
-                    {msg.respostaProf && (
-                      <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-950">
-                        <strong className="block text-[10px] uppercase text-emerald-800">
-                          Resposta do Professor:
-                        </strong>
-                        {msg.respostaProf}
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 rounded-xl bg-amber-400 text-amber-950 shrink-0">
+                        <BellRing size={22} />
                       </div>
-                    )}
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                          Lembrete de Aula Hoje
+                        </span>
+                        <h3 className="text-base font-bold text-amber-950">
+                          {alertaTurma.titulo} — {alertaTurma.alertaHoje.texto}
+                        </h3>
+                        <p className="text-xs text-amber-900">
+                          Prof. {alertaTurma.professoresNomes} • No Compasso Studio de Dança
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1.5 rounded-xl bg-amber-950 text-white text-xs font-bold uppercase self-start sm:self-center">
+                      {alertaTurma.horaInicio} às {alertaTurma.horarioFim || '21:00'}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      )}
+
+            {/* NAVEGAÇÃO EM 3 ABAS */}
+            <div className="flex flex-wrap gap-2 bg-white p-2 rounded-2xl border border-zinc-200 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setAbaAtiva('turmas')}
+                className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase transition ${
+                  abaAtiva === 'turmas'
+                    ? 'bg-[#4A041C] text-white shadow'
+                    : 'text-zinc-600 hover:bg-zinc-100'
+                }`}
+              >
+                <BookOpen size={16} />
+                Minhas Turmas ({turmasMatriculadas.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAbaAtiva('novidades')}
+                className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase transition ${
+                  abaAtiva === 'novidades'
+                    ? 'bg-[#D81B60] text-white shadow'
+                    : 'text-zinc-600 hover:bg-zinc-100'
+                }`}
+              >
+                <Sparkles size={16} />
+                Novas Atividades ({novasAtividades.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAbaAtiva('fale_conosco')}
+                className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase transition ${
+                  abaAtiva === 'fale_conosco'
+                    ? 'bg-[#4A041C] text-white shadow'
+                    : 'text-zinc-600 hover:bg-zinc-100'
+                }`}
+              >
+                <MessageSquare size={16} />
+                Fale Conosco
+              </button>
+            </div>
+
+            {/* ================================================================= */}
+            {/* ABA 1: MINHAS TURMAS MATRICULADAS & DIAS DE AULA                  */}
+            {/* ================================================================= */}
+            {abaAtiva === 'turmas' && (
+              <div className="space-y-4">
+                {turmasMatriculadas.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-zinc-200 p-8 text-center space-y-3">
+                    <p className="text-sm font-semibold text-zinc-700">
+                      Você ainda não possui matrícula vinculada a nenhuma turma ativa.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setAbaAtiva('novidades')}
+                      className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] px-5 py-2.5 text-xs font-bold uppercase text-white hover:bg-[#AD1457]"
+                    >
+                      <Sparkles size={15} /> Ver Turmas & Atividades Abertas
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {turmasMatriculadas.map((turma) => (
+                      <div
+                        key={turma.id}
+                        className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col justify-between"
+                      >
+                        <div>
+                          {turma.cardUrl && (
+                            <img
+                              src={turma.cardUrl}
+                              alt={turma.titulo}
+                              className="w-full h-36 object-cover"
+                            />
+                          )}
+                          <div className="p-5 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="px-2.5 py-0.5 rounded bg-[#4A041C] text-white text-[10px] font-bold uppercase">
+                                {turma.frente || 'Dança de Salão'} • {turma.estilo}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                <CheckCircle2 size={12} /> Matriculado
+                              </span>
+                            </div>
+
+                            <h3 className="text-xl font-bold font-condensed uppercase text-zinc-900">
+                              {turma.titulo}
+                            </h3>
+
+                            <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2 text-xs">
+                              <p className="flex items-center gap-2 font-bold text-[#4A041C]">
+                                <Calendar size={15} className="text-[#D81B60]" />
+                                Dias de Aula: <span className="text-zinc-900">{turma.dataInfo}</span>
+                              </p>
+                              <p className="flex items-center gap-2 font-bold text-[#4A041C]">
+                                <Clock size={15} className="text-[#D81B60]" />
+                                Horário:{' '}
+                                <span className="text-zinc-900">
+                                  {turma.horaInicio || '19:00'} às {turma.horarioFim || '21:00'}
+                                </span>
+                              </p>
+                              <p className="flex items-center gap-2 text-zinc-600">
+                                <UserCheck size={15} className="text-[#D81B60]" />
+                                Professor(a): <strong>{turma.professoresNomes}</strong>
+                              </p>
+                            </div>
+
+                            {/* STATUS DA MENSALIDADE NA TURMA */}
+                            {!turma.isBolsistaNaTurma && Number(turma.valor || 0) > 0 && (
+                              <div className="p-3 rounded-xl bg-pink-50/60 border border-pink-200 text-xs flex items-center justify-between">
+                                <div>
+                                  <span className="block font-bold text-[#4A041C]">
+                                    Vencimento: Todo dia {String(turma.diaVencimento).padStart(2, '0')}
+                                  </span>
+                                  <span className="text-[11px] text-zinc-600">
+                                    {turma.qtdPagas} mensalidade(s) paga(s)
+                                  </span>
+                                </div>
+                                <span
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase ${
+                                    turma.qtdPertoVencer > 0 || turma.proximoVencimento.diffDias <= 7
+                                      ? 'bg-amber-200 text-amber-950'
+                                      : 'bg-emerald-100 text-emerald-800'
+                                  }`}
+                                >
+                                  Próx: {turma.proximoVencimento.dataBr}
+                                </span>
+                              </div>
+                            )}
+
+                            {turma.alertaHoje && (
+                              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-xs font-bold text-amber-900 flex items-center gap-2">
+                                <BellRing size={15} className="text-amber-600 shrink-0" />
+                                <span>{turma.alertaHoje.texto}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="px-5 pb-5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCursoMensagemId(turma.id);
+                              setAbaAtiva('fale_conosco');
+                            }}
+                            className="w-full flex items-center justify-center gap-2 rounded-xl border border-zinc-300 py-2.5 text-xs font-bold uppercase text-zinc-700 hover:bg-[#4A041C] hover:text-white transition"
+                          >
+                            <MessageSquare size={14} />
+                            Enviar Mensagem para {turma.professoresNomes?.split(' ')[0] || 'Prof.'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* ABA 2: ANÚNCIOS DE NOVAS ATIVIDADES & INSCRIÇÃO                   */}
+            {/* ================================================================= */}
+            {abaAtiva === 'novidades' && (
+              <div className="space-y-4">
+                <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm">
+                  <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C]">
+                    Novos Cursos, Workshops & Bailes do Studio
+                  </h3>
+                  <p className="text-xs text-zinc-500">
+                    Garanta sua vaga ou ingresso diretamente pelo link oficial de inscrição.
+                  </p>
+                </div>
+
+                {novasAtividades.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-zinc-200 p-8 text-center text-sm text-zinc-500">
+                    Nenhuma nova atividade extra anunciada no momento. Fique de olho por aqui!
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {novasAtividades.map((ativ) => (
+                      <div
+                        key={ativ.id}
+                        className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col justify-between"
+                      >
+                        <div>
+                          {ativ.cardUrl && (
+                            <img
+                              src={ativ.cardUrl}
+                              alt={ativ.titulo}
+                              className="w-full h-44 object-cover"
+                            />
+                          )}
+                          <div className="p-5 space-y-2.5">
+                            <span
+                              className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold uppercase text-white ${
+                                ativ.categoriaItem === 'evento' ? 'bg-[#D81B60]' : 'bg-[#4A041C]'
+                              }`}
+                            >
+                              {ativ.badge}
+                            </span>
+
+                            <h4 className="text-xl font-bold font-condensed uppercase text-zinc-900">
+                              {ativ.titulo}
+                            </h4>
+
+                            <p className="text-xs text-zinc-600 flex items-center gap-1.5">
+                              {ativ.categoriaItem === 'evento' ? (
+                                <MapPin size={14} className="text-[#D81B60]" />
+                              ) : (
+                                <Calendar size={14} className="text-[#D81B60]" />
+                              )}
+                              {ativ.subtituloData}
+                            </p>
+
+                            {(ativ.ementa || ativ.descricao) && (
+                              <p className="text-xs text-zinc-500 line-clamp-3">
+                                {ativ.ementa || ativ.descricao}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="p-5 pt-0 flex items-center justify-between gap-3">
+                          <div>
+                            <span className="block text-[10px] uppercase font-bold text-zinc-400">
+                              Investimento
+                            </span>
+                            <strong className="text-base font-bold text-[#4A041C]">
+                              {ativ.valorExibicao === 0
+                                ? 'Gratuito'
+                                : `R$ ${ativ.valorExibicao.toFixed(2).replace('.', ',')}`}
+                            </strong>
+                          </div>
+
+                          <Link
+                            to={`/inscricao/${ativ.categoriaItem}/${ativ.id}`}
+                            className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-4 py-2.5 text-xs font-bold uppercase text-white shadow-sm transition"
+                          >
+                            {ativ.categoriaItem === 'evento' ? (
+                              <>
+                                <Ticket size={15} /> Comprar Ingresso
+                              </>
+                            ) : (
+                              <>
+                                Inscrever-se <ExternalLink size={14} />
+                              </>
+                            )}
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* ABA 3: FALE CONOSCO (MENSAGEM DIRETA PARA O PROFESSOR DA TURMA)   */}
+            {/* ================================================================= */}
+            {abaAtiva === 'fale_conosco' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
+                  <div className="flex items-center gap-2 text-[#4A041C]">
+                    <MessageSquare size={20} className="text-[#D81B60]" />
+                    <h3 className="text-lg font-bold uppercase font-condensed">
+                      Fale com o Professor da Sua Turma
+                    </h3>
+                  </div>
+
+                  {turmasMatriculadas.length === 0 ? (
+                    <p className="text-xs text-zinc-500">
+                      Você precisa estar matriculado em uma turma para enviar mensagens diretas ao professor responsável.
+                    </p>
+                  ) : (
+                    <form onSubmit={handleEnviarMensagemProfessor} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                          Selecione sua Turma
+                        </label>
+                        <select
+                          value={cursoMensagemId}
+                          onChange={(e) => setCursoMensagemId(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
+                        >
+                          {turmasMatriculadas.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.titulo} — Prof. {t.professoresNomes}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                          Assunto
+                        </label>
+                        <select
+                          value={assuntoMensagem}
+                          onChange={(e) => setAssuntoMensagem(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+                        >
+                          <option value="Dúvida sobre a aula / passos">Dúvida sobre a aula / passos</option>
+                          <option value="Aviso de ausência / atraso">Aviso de ausência / atraso</option>
+                          <option value="Ensaios / Coreografia">Ensaios / Coreografia</option>
+                          <option value="Outro assunto">Outro assunto</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                          Mensagem para o Professor
+                        </label>
+                        <textarea
+                          rows="4"
+                          required
+                          placeholder="Escreva sua dúvida ou recado aqui..."
+                          value={textoMensagem}
+                          onChange={(e) => setTextoMensagem(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 p-3 text-sm text-zinc-900"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={enviandoMsg}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] py-3 text-xs font-bold uppercase tracking-wider text-white transition shadow"
+                      >
+                        <Send size={15} />
+                        {enviandoMsg ? 'Enviando...' : 'Enviar Mensagem ao Professor'}
+                      </button>
+                    </form>
+                  )}
+                </div>
+
+                {/* HISTÓRICO DE MENSAGENS ENVIADAS */}
+                <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
+                  <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900">
+                    Mensagens Enviadas ({minhasMensagens.length})
+                  </h3>
+
+                  {minhasMensagens.length === 0 ? (
+                    <p className="text-xs text-zinc-400 py-8 text-center">
+                      Você ainda não enviou nenhuma mensagem aos professores.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 max-h-[460px] overflow-y-auto">
+                      {minhasMensagens.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-[#4A041C]">{msg.cursoTitulo}</span>
+                            <span className="text-[10px] text-zinc-400">
+                              {msg.dataEnvio
+                                ? new Date(msg.dataEnvio).toLocaleDateString('pt-BR')
+                                : ''}
+                            </span>
+                          </div>
+                          <p className="text-[11px] font-semibold text-[#D81B60]">
+                            Para: Prof. {msg.destinatarioNome}
+                          </p>
+                          <p className="text-zinc-800 bg-white p-2.5 rounded-lg border border-zinc-200">
+                            {msg.texto}
+                          </p>
+                          {msg.resposta && (
+                            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-950">
+                              <strong className="block text-[10px] uppercase text-emerald-800">
+                                Resposta de {msg.respondidoPor || 'Professor(a)'}:
+                              </strong>
+                              {msg.resposta}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </main>
     </div>
   );
 }
