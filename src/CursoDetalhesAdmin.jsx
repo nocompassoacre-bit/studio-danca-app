@@ -25,6 +25,7 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
 
   const [ementa, setEmenta] = useState(curso.ementa || '');
   const [profId, setProfId] = useState(curso.profId || '');
+  const [diaVencimentoCurso, setDiaVencimentoCurso] = useState(curso.diaVencimento || 5);
   const [salvandoEmenta, setSalvandoEmenta] = useState(false);
 
   const [tipoPlano, setTipoPlano] = useState('turma');
@@ -478,8 +479,9 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
         ementa,
         profId,
         professoresNomes: profObj ? profObj.nome : 'Equipe No Compasso',
+        diaVencimento: Number(diaVencimentoCurso) || 5,
       });
-      alert('Ementa e professor atualizados com sucesso!');
+      alert('Ementa, professor e dia de vencimento atualizados com sucesso!');
       recarregarGeral();
     } catch (err) {
       alert('Erro ao salvar: ' + err.message);
@@ -933,18 +935,36 @@ export default function CursoDetalhesAdmin({ curso, usuarios, financeiro, onVolt
           </h3>
 
           <form onSubmit={handleSalvarEmentaEProf} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Professor Responsável pela Turma</label>
-              <select
-                value={profId}
-                onChange={(e) => setProfId(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
-              >
-                <option value="">Equipe No Compasso</option>
-                {profs.map((p) => (
-                  <option key={p.id} value={p.id}>{p.nome}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                  Professor Responsável pela Turma
+                </label>
+                <select
+                  value={profId}
+                  onChange={(e) => setProfId(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+                >
+                  <option value="">Equipe No Compasso</option>
+                  {profs.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nome}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                  Dia de Vencimento da Mensalidade (Padrão: Dia 05)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="31"
+                  value={diaVencimentoCurso}
+                  onChange={(e) => setDiaVencimentoCurso(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-bold text-zinc-900"
+                />
+              </div>
             </div>
 
             <div>
