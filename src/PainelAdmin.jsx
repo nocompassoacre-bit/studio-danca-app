@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
-import { LogOut, DollarSign, Users, BookOpen, Calendar } from 'lucide-react';
+import { LogOut, DollarSign, Users, BookOpen, Calendar, Award } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
 import AdminFinanceiro from './AdminFinanceiro';
@@ -8,28 +8,34 @@ import AdminGestao from './AdminGestao';
 
 export default function PainelAdmin() {
   const { userData, logout } = useAuth();
-  const [abaAtiva, setAbaAtiva] = useState('usuarios'); // Inicia em Alunos, Bolsistas & Profs
+  const [abaAtiva, setAbaAtiva] = useState('usuarios');
 
   const [financeiro, setFinanceiro] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [cursos, setCursos] = useState([]);
   const [eventos, setEventos] = useState([]);
+  const [avaliacoesBolsistas, setAvaliacoesBolsistas] = useState([]);
+  const [presencasBolsistas, setPresencasBolsistas] = useState([]);
   const [carregando, setCarregando] = useState(true);
 
   const carregarTudo = async () => {
     setCarregando(true);
     try {
-      const [finSnap, userSnap, cursoSnap, evSnap] = await Promise.all([
+      const [finSnap, userSnap, cursoSnap, evSnap, avalSnap, presBolsSnap] = await Promise.all([
         getDocs(collection(db, 'financeiro')),
         getDocs(collection(db, 'users')),
         getDocs(collection(db, 'cursos')),
         getDocs(collection(db, 'eventos')),
+        getDocs(collection(db, 'avaliacoes_bolsistas')),
+        getDocs(collection(db, 'presencas_bolsistas')),
       ]);
 
       setFinanceiro(finSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setUsuarios(userSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setCursos(cursoSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setEventos(evSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setAvaliacoesBolsistas(avalSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setPresencasBolsistas(presBolsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (err) {
       console.error('Erro ao carregar dados do admin:', err);
     } finally {
@@ -41,10 +47,10 @@ export default function PainelAdmin() {
     carregarTudo();
   }, []);
 
-  // Ordem exata solicitada: Alunos -> Cursos -> Eventos -> Financeiro
   const abas = [
     { id: 'usuarios', label: 'Alunos, Bolsistas & Profs', icon: Users },
     { id: 'cursos', label: 'Cursos & Turmas', icon: BookOpen },
+    { id: 'bolsistas_admin', label: 'Bolsistas & Pareceres', icon: Award },
     { id: 'eventos', label: 'Eventos', icon: Calendar },
     { id: 'financeiro', label: 'Financeiro & Lucros', icon: DollarSign },
   ];
@@ -121,6 +127,8 @@ export default function PainelAdmin() {
             cursos={cursos}
             eventos={eventos}
             financeiro={financeiro}
+            avaliacoesBolsistas={avaliacoesBolsistas}
+            presencasBolsistas={presencasBolsistas}
             recarregar={carregarTudo}
           />
         )}
