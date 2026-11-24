@@ -21,6 +21,8 @@ import {
   ShieldCheck,
   AlertTriangle,
   RefreshCw,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
@@ -160,6 +162,14 @@ export default function PainelBolsista() {
   const [avaliacoes, setAvaliacoes] = useState([]);
   const [atividadesDisponiveis, setAtividadesDisponiveis] = useState([]);
 
+  // Estados de Mensagens
+  const [professoresLista, setProfessoresLista] = useState([]);
+  const [mensagens, setMensagens] = useState([]);
+  const [destinoMensagem, setDestinoMensagem] = useState('admin'); // 'admin' ou uid do professor
+  const [assuntoMensagem, setAssuntoMensagem] = useState('');
+  const [textoMensagem, setTextoMensagem] = useState('');
+  const [enviandoMensagem, setEnviandoMensagem] = useState(false);
+
   // Estados de Localização e Horário
   const [atividadeSelecionadaKey, setAtividadeSelecionadaKey] = useState('');
   const [coordsUsuario, setCoordsUsuario] = useState(null);
@@ -246,6 +256,8 @@ export default function PainelBolsista() {
           )
         ),
         getDocs(collection(db, 'eventos')),
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'mensagens')),
       ]);
 
       const extrair = (res) =>
@@ -263,6 +275,26 @@ export default function PainelBolsista() {
       const todosCursos = extrair(resultados[3]).filter((c) => c.ativo !== false);
       const minhasMatriculas = extrair(resultados[4]);
       const todosEventos = extrair(resultados[5]);
+      const todosUsuarios = extrair(resultados[6]);
+      const todasMensagens = extrair(resultados[7]);
+
+      // Professores para envio de mensagem
+      const profs = todosUsuarios.filter((u) =>
+        Array.isArray(u.roles) ? u.roles.includes('prof') : u.role === 'prof'
+      );
+      setProfessoresLista(profs);
+
+      // Mensagens enviadas por este bolsista OU destinadas a ele / todos os bolsistas
+      const minhasMsgs = todasMensagens
+        .filter(
+          (m) =>
+            m.remetenteId === user.uid ||
+            m.destinatarioId === user.uid ||
+            m.destinatarioTipo === 'todos_bolsistas' ||
+            m.destinatarioTipo === 'todos'
+        )
+        .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+      setMensagens(minhasMsgs);
 
       // 1. Turmas vinculadas
       const idsMatriculados = new Set(minhasMatriculas.map((m) => m.cursoId));
@@ -407,11 +439,45 @@ export default function PainelBolsista() {
     }
   };
 
+  const handleEnviarMensagem = async (e) => {
+    e.preventDefault();
+    if (!textoMensagem.trim() || !user?.uid) return;
+
+    setEnviandoMensagem(true);
+    try {
+      const profSelecionado = professoresLista.find((p) => p.id === destinoMensagem);
+      const isParaAdmin = destinoMensagem === 'admin';
+
+      await addDoc(collection(db, 'mensagens'), {
+        remetenteId: user.uid,
+        remetenteNome: `${userData?.nome || 'Bolsista'} (Bolsista)`,
+        remetenteRole: 'bolsista',
+        destinatarioTipo: isParaAdmin ? 'admin' : 'prof',
+        destinatarioId: isParaAdmin ? 'admin' : destinoMensagem,
+        destinatarioNome: isParaAdmin
+          ? 'Coordenação Geral / Admin'
+          : `Prof. ${profSelecionado?.nome || ''}`,
+        assunto: assuntoMensagem.trim() || 'Comunicado de Bolsista',
+        texto: textoMensagem.trim(),
+        lida: false,
+        criadoEm: new Date().toISOString(),
+      });
+
+      setAssuntoMensagem('');
+      setTextoMensagem('');
+      alert('✅ Mensagem enviada com sucesso!');
+      carregarDadosBolsista();
+    } catch (err) {
+      alert('Erro ao enviar mensagem: ' + err.message);
+    } finally {
+      setEnviandoMensagem(false);
+    }
+  };
+
   const atividadeAtual = atividadesDisponiveis.find(
     (a) => a.key === atividadeSelecionadaKey
   );
 
-  // Calcula distância dinâmica entre o celular do bolsista e o local da atividade escolhida (Studio ou Teatro/Evento)
   const distanciaAlvo = useMemo(() => {
     if (!coordsUsuario || !atividadeAtual) return null;
     return calcularDistanciaMetros(
@@ -558,6 +624,7 @@ export default function PainelBolsista() {
   const abas = [
     { id: 'visao_geral', label: 'Minha Bolsa & Check-in', icon: Award },
     { id: 'desempenho', label: 'Minhas Avaliações', icon: TrendingUp },
+    { id: 'mensagens', label: `Mensagens (${mensagens.length})`, icon: MessageSquare },
     { id: 'turmas_perfil', label: 'Agenda & Conta', icon: BookOpen },
   ];
 
@@ -916,6 +983,137 @@ export default function PainelBolsista() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : abaAtiva === 'mensagens' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
+              <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+                <Send size={18} className="text-[#D81B60]" /> Enviar Mensagem / Justificativa
+              </h3>
+
+              <form onSubmit={handleEnviarMensagem} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                    Destinatário
+                  </label>
+                  <select
+                    value={destinoMensagem}
+                    onChange={(e) => setDestinoMensagem(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
+                  >
+                    <option value="admin">🏛️ Coordenação Geral / Administração</option>
+                    {professoresLista.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        💃 Prof. {p.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                    Assunto
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Justificativa de ausência, dúvida sobre escala..."
+                    value={assuntoMensagem}
+                    onChange={(e) => setAssuntoMensagem(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                    Mensagem
+                  </label>
+                  <textarea
+                    rows="4"
+                    required
+                    placeholder="Escreva aqui sua mensagem para a coordenação ou professor..."
+                    value={textoMensagem}
+                    onChange={(e) => setTextoMensagem(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-300 p-3 text-sm text-zinc-900"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={enviandoMensagem}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#D81B60] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#AD1457] transition"
+                >
+                  <Send size={15} />
+                  {enviandoMensagem ? 'Enviando...' : 'Enviar Mensagem'}
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
+              <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+                <MessageSquare size={18} className="text-[#D81B60]" /> Caixa de Mensagens & Avisos ({mensagens.length})
+              </h3>
+
+              {mensagens.length === 0 ? (
+                <p className="text-sm text-zinc-400 py-10 text-center">
+                  Nenhuma mensagem enviada ou recebida ainda.
+                </p>
+              ) : (
+                <div className="space-y-3 max-h-[520px] overflow-y-auto">
+                  {mensagens.map((m) => {
+                    const enviadaPorMim = m.remetenteId === user?.uid;
+                    return (
+                      <div
+                        key={m.id}
+                        className={`p-4 rounded-xl border space-y-1.5 ${
+                          enviadaPorMim
+                            ? 'bg-zinc-50 border-zinc-200'
+                            : 'bg-pink-50/60 border-[#D81B60]/30'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              enviadaPorMim
+                                ? 'bg-cyan-100 text-cyan-900'
+                                : 'bg-[#4A041C] text-white'
+                            }`}
+                          >
+                            {enviadaPorMim
+                              ? `Enviada para: ${m.destinatarioNome || 'Coordenação'}`
+                              : `Recebida de: ${m.remetenteNome || 'Coordenação'}`}
+                          </span>
+                          <span className="text-[11px] text-zinc-400">
+                            {m.criadoEm
+                              ? new Date(m.criadoEm).toLocaleString('pt-BR', {
+                                  dateStyle: 'short',
+                                  timeStyle: 'short',
+                                })
+                              : ''}
+                          </span>
+                        </div>
+
+                        <h4 className="text-sm font-bold text-zinc-900">
+                          {m.assunto || 'Mensagem'}
+                        </h4>
+                        <p className="text-xs text-zinc-700 whitespace-pre-line leading-relaxed">
+                          {m.texto}
+                        </p>
+
+                        {m.resposta && (
+                          <div className="mt-2 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-950">
+                            <strong className="block text-[10px] uppercase text-emerald-800 mb-0.5">
+                              Resposta ({m.respondidoPorNome || 'Coordenação'}):
+                            </strong>
+                            {m.resposta}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
