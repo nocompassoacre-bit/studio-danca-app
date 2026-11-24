@@ -7,6 +7,7 @@ import PainelProfessor from './PainelProfessor';
 import PainelBolsista from './PainelBolsista';
 import PainelAluno from './PainelAluno';
 import InscricaoPublica from './InscricaoPublica';
+import CadastroUnicoPublico from './CadastroUnicoPublico';
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePublica />} />
           <Route path="/inscricao/:tipo/:id" element={<InscricaoPublica />} />
+          <Route path="/cadastro-unico/:token" element={<CadastroUnicoPublico />} />
 
           <Route
             path="/admin/*"
