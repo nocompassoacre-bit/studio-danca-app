@@ -4,7 +4,7 @@ import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import {
   UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check,
-  FolderOpen, Edit3, X, ShieldAlert, Search, Image as ImageIcon
+  FolderOpen, Edit3, X, ShieldAlert, Search, Image as ImageIcon, Award, Lock
 } from 'lucide-react';
 import { db } from './firebase';
 import CursoDetalhesAdmin from './CursoDetalhesAdmin';
@@ -41,7 +41,6 @@ function limparCpf(valor) {
   return (valor || '').replace(/\D/g, '');
 }
 
-// Comprime e converte a imagem do Card Oficial para armazenamento direto e rápido
 function processarImagemCard(file, callback) {
   if (!file) return;
   const reader = new FileReader();
@@ -63,17 +62,28 @@ function processarImagemCard(file, callback) {
   reader.readAsDataURL(file);
 }
 
-export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro, recarregar }) {
+export default function AdminGestao({
+  aba,
+  usuarios,
+  cursos,
+  eventos,
+  financeiro,
+  avaliacoesBolsistas = [],
+  presencasBolsistas = [],
+  recarregar,
+}) {
   const [copiadoId, setCopiadoId] = useState(null);
   const [cursoAbertoId, setCursoAbertoId] = useState(null);
   const [filtroFrente, setFiltroFrente] = useState('todas');
   const [buscaUsuario, setBuscaUsuario] = useState('');
+  const [bolsistaFiltroAdmin, setBolsistaFiltroAdmin] = useState('todos');
 
   // Estado de Edição de Usuário
   const [usuarioEditandoId, setUsuarioEditandoId] = useState(null);
 
   // Estados para Cadastro/Edição de Usuários
   const [rolesSelecionados, setRolesSelecionados] = useState(['aluno']);
+  const [podeAvaliarBolsistas, setPodeAvaliarBolsistas] = useState(false);
   const [frentesAluno, setFrentesAluno] = useState(['Dança de Salão']);
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
@@ -120,6 +130,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   const idadeCalculada = calcularIdade(dataNascimento);
   const isMenorDe15 = idadeCalculada !== null && idadeCalculada < 15;
   const isAlunoOuBolsista = rolesSelecionados.includes('aluno') || rolesSelecionados.includes('bolsista');
+  const isProfSelecionado = rolesSelecionados.includes('prof');
 
   const profs = usuarios.filter((u) =>
     Array.isArray(u.roles) ? u.roles.includes('prof') : u.role === 'prof'
@@ -143,6 +154,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   const limparFormularioUsuario = () => {
     setUsuarioEditandoId(null);
     setRolesSelecionados(['aluno']);
+    setPodeAvaliarBolsistas(false);
     setFrentesAluno(['Dança de Salão']);
     setNome('');
     setEmail('');
@@ -162,6 +174,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     setUsuarioEditandoId(u.id);
     const papeis = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : [u.role || 'aluno'];
     setRolesSelecionados(papeis);
+    setPodeAvaliarBolsistas(Boolean(u.podeAvaliarBolsistas));
     setFrentesAluno(Array.isArray(u.frentes) && u.frentes.length > 0 ? u.frentes : ['Dança de Salão']);
     setNome(u.nome || '');
     setEmail(u.email || '');
@@ -176,6 +189,18 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
     setTelefoneSecundarioAluno(u.telefoneSecundarioAluno || '');
     setEmailSecundarioAluno(u.emailSecundarioAluno || '');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleToggleAutorizacaoBolsista = async (u) => {
+    const novoStatus = !u.podeAvaliarBolsistas;
+    try {
+      await updateDoc(doc(db, 'users', u.id), {
+        podeAvaliarBolsistas: novoStatus,
+      });
+      recarregar();
+    } catch (err) {
+      alert('Erro ao atualizar autorização: ' + err.message);
+    }
   };
 
   const handleCpfChange = (valorDigitado) => {
@@ -229,6 +254,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
       frentes: isAlunoOuBolsista ? frentesAluno : [],
       role: rolePrincipal,
       roles: rolesSelecionados,
+      podeAvaliarBolsistas: isProfSelecionado ? podeAvaliarBolsistas : false,
       status: 'ativo',
     };
 
@@ -425,6 +451,23 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
                 })}
               </div>
             </div>
+
+            {isProfSelecionado && (
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-pink-50 border border-[#D81B60]/30 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={podeAvaliarBolsistas}
+                  onChange={(e) => setPodeAvaliarBolsistas(e.target.checked)}
+                  className="mt-0.5 accent-[#D81B60]"
+                />
+                <span className="text-xs text-[#4A041C] leading-snug">
+                  <strong>Autorizar Avaliação de Bolsistas</strong>
+                  <span className="block text-[11px] text-zinc-600">
+                    Libera no painel deste professor a aba para lançar frequências, avaliar notas e registrar pareceres sigilosos para a Coordenação.
+                  </span>
+                </span>
+              </label>
+            )}
 
             {isAlunoOuBolsista && (
               <div>
@@ -693,7 +736,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               <thead>
                 <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
                   <th className="py-3 px-2">Nome / Modalidade</th>
-                  <th className="py-3 px-2">Rótulos</th>
+                  <th className="py-3 px-2">Rótulos & Permissões</th>
                   <th className="py-3 px-2">Contato / Nasc.</th>
                   <th className="py-3 px-2 text-right">Ações</th>
                 </tr>
@@ -701,6 +744,8 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               <tbody className="divide-y divide-zinc-100">
                 {usuariosFiltrados.map((u) => {
                   const listaPapeis = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : [u.role || 'aluno'];
+                  const ehProf = listaPapeis.includes('prof');
+
                   return (
                     <tr key={u.id} className="hover:bg-zinc-50">
                       <td className="py-3 px-2">
@@ -730,6 +775,22 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
                             );
                           })}
                         </div>
+
+                        {ehProf && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAutorizacaoBolsista(u)}
+                            className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border transition ${
+                              u.podeAvaliarBolsistas
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
+                                : 'bg-zinc-100 text-zinc-500 border-zinc-300 hover:bg-pink-50 hover:text-[#D81B60]'
+                            }`}
+                            title="Clique para ativar ou revogar permissão de avaliar bolsistas"
+                          >
+                            <Award size={11} />
+                            {u.podeAvaliarBolsistas ? 'Avalia Bolsistas ✓' : 'Autorizar Aval. Bolsistas'}
+                          </button>
+                        )}
                       </td>
 
                       <td className="py-3 px-2 text-xs text-zinc-600">
@@ -766,7 +827,142 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   }
 
   // =========================================================================
-  // ABA 2: CURSOS & TURMAS (Com Upload do Card Oficial)
+  // ABA NOVA: BOLSISTAS & PARECERES ASSINADOS (EXCLUSIVO COORDENAÇÃO/ADMIN)
+  // =========================================================================
+  if (aba === 'bolsistas_admin') {
+    const bolsistas = usuarios.filter((u) => {
+      const roles = Array.isArray(u.roles) ? u.roles : [u.role];
+      return roles.includes('bolsista');
+    });
+
+    const avaliacoesFiltradas = avaliacoesBolsistas
+      .filter((a) => (bolsistaFiltroAdmin === 'todos' ? true : a.bolsistaId === bolsistaFiltroAdmin))
+      .sort((a, b) => (b.dataAvaliacao || '').localeCompare(a.dataAvaliacao || ''));
+
+    const presencasFiltradas = presencasBolsistas
+      .filter((p) => (bolsistaFiltroAdmin === 'todos' ? true : p.bolsistaId === bolsistaFiltroAdmin))
+      .sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+              <Award size={22} className="text-[#D81B60]" /> Desempenho, Frequência & Pareceres de Bolsistas
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Todas as anotações registradas pelos professores autorizados ficam identificadas com o nome do avaliador.
+            </p>
+          </div>
+
+          <select
+            value={bolsistaFiltroAdmin}
+            onChange={(e) => setBolsistaFiltroAdmin(e.target.value)}
+            className="rounded-xl border border-zinc-300 px-3.5 py-2.5 text-sm font-bold text-[#4A041C]"
+          >
+            <option value="todos">Todos os Bolsistas ({bolsistas.length})</option>
+            {bolsistas.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.nome}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Coluna Esquerda: Avaliações e Anotações Sigilosas */}
+          <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
+            <h4 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+              <Lock size={16} className="text-[#D81B60]" /> Avaliações & Anotações Assinadas ({avaliacoesFiltradas.length})
+            </h4>
+
+            {avaliacoesFiltradas.length === 0 ? (
+              <p className="text-sm text-zinc-400 py-8 text-center">
+                Nenhuma avaliação registrada ainda. Autorize um professor na aba "Alunos, Bolsistas & Profs" para começar.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {avaliacoesFiltradas.map((av) => (
+                  <div key={av.id} className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="font-bold text-sm text-zinc-900">{av.bolsistaNome}</span>
+                        <span className="block text-[11px] font-semibold text-[#D81B60]">
+                          Avaliado por: <strong>{av.avaliadorNome}</strong> •{' '}
+                          {av.dataAvaliacao ? new Date(av.dataAvaliacao).toLocaleDateString('pt-BR') : ''}
+                        </span>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-[#4A041C] text-white text-xs font-bold">
+                        Média: {av.mediaGeral} / 5
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-white p-2.5 rounded-lg border border-zinc-200">
+                      <span>Assiduidade: <strong>{av.assiduidade}/5</strong></span>
+                      <span>Participação: <strong>{av.participacao}/5</strong></span>
+                      <span>Pontualidade: <strong>{av.pontualidade}/5</strong></span>
+                      <span>Postura: <strong>{av.postura}/5</strong></span>
+                    </div>
+
+                    {av.anotacaoRestritaAdmin && (
+                      <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-950">
+                        <strong className="uppercase text-[10px] tracking-wider text-amber-800 block mb-0.5">
+                          Parecer Sigiloso ({av.avaliadorNome}):
+                        </strong>
+                        {av.anotacaoRestritaAdmin}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Coluna Direita: Frequência em Atividades */}
+          <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
+            <h4 className="text-base font-bold uppercase font-condensed text-[#4A041C]">
+              Frequência em Atividades ({presencasFiltradas.length})
+            </h4>
+
+            {presencasFiltradas.length === 0 ? (
+              <p className="text-sm text-zinc-400 py-8 text-center">
+                Nenhum registro de atividade de bolsista ainda.
+              </p>
+            ) : (
+              <div className="space-y-2.5 max-h-[520px] overflow-y-auto">
+                {presencasFiltradas.map((pr) => (
+                  <div key={pr.id} className="p-3 rounded-xl border border-zinc-200 bg-zinc-50 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span className="text-zinc-900">{pr.bolsistaNome}</span>
+                      <span
+                        className={
+                          pr.status === 'presente'
+                            ? 'text-emerald-700'
+                            : pr.status === 'falta'
+                            ? 'text-red-600'
+                            : 'text-amber-700'
+                        }
+                      >
+                        {pr.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-zinc-700">
+                      📅 {pr.data?.split('-').reverse().join('/')} • <strong>{pr.tipoAtividade}</strong>
+                    </p>
+                    {pr.descricao && <p className="text-zinc-500">{pr.descricao}</p>}
+                    <p className="text-[10px] text-zinc-400">Lançado por: {pr.lancadoPorNome}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // ABA 2: CURSOS & TURMAS
   // =========================================================================
   if (aba === 'cursos') {
     const cursoDetalhe = cursos.find((c) => c.id === cursoAbertoId);
@@ -843,7 +1039,6 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
               />
             </div>
 
-            {/* UPLOAD DO CARD OFICIAL DO CURSO */}
             <div>
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
                 Card Oficial do Curso (Arte / Banner)
@@ -1078,7 +1273,7 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
   }
 
   // =========================================================================
-  // ABA 3: EVENTOS (Com Upload do Card Oficial do Evento)
+  // ABA 3: EVENTOS
   // =========================================================================
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1100,7 +1295,6 @@ export default function AdminGestao({ aba, usuarios, cursos, eventos, financeiro
             />
           </div>
 
-          {/* UPLOAD DO CARD OFICIAL DO EVENTO */}
           <div>
             <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
               Card Oficial do Evento (Flyer / Cartaz)
