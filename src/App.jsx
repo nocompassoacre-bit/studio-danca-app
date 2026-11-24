@@ -5,13 +5,8 @@ import HomePublica from './HomePublica';
 import PainelAdmin from './PainelAdmin';
 import PainelProfessor from './PainelProfessor';
 import PainelBolsista from './PainelBolsista';
+import PainelAluno from './PainelAluno';
 import InscricaoPublica from './InscricaoPublica';
-
-const PlaceholderPainel = ({ titulo }) => (
-  <div className="min-h-screen bg-[#F4F4F6] text-zinc-900 flex items-center justify-center">
-    <h1 className="text-3xl font-bold font-condensed text-[#4A041C]">{titulo}</h1>
-  </div>
-);
 
 export default function App() {
   return (
@@ -20,7 +15,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePublica />} />
           <Route path="/inscricao/:tipo/:id" element={<InscricaoPublica />} />
-          
+
           <Route
             path="/admin/*"
             element={
@@ -41,7 +36,7 @@ export default function App() {
             path="/aluno/*"
             element={
               <ProtectedRoute allowedRole="aluno">
-                <PlaceholderPainel titulo="Painel do Aluno (Etapa 3)" />
+                <PainelAluno />
               </ProtectedRoute>
             }
           />
