@@ -26,6 +26,7 @@ const LABELS_MOD = {
   aluno: { nome: 'Aluno(a)', cor: 'bg-zinc-900 text-white' },
   prof: { nome: 'Professor(a)', cor: 'bg-[#D81B60] text-white' },
   bolsista: { nome: 'Bolsista', cor: 'bg-cyan-700 text-white' },
+  admin: { nome: 'Admin / Coordenação', cor: 'bg-amber-600 text-white' },
 };
 
 export function GeradorLinkCadastroUnico() {
