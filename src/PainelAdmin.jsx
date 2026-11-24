@@ -21,7 +21,7 @@ export default function PainelAdmin() {
   const carregarTudo = async () => {
     setCarregando(true);
     try {
-      const [finSnap, userSnap, cursoSnap, evSnap, avalSnap, presBolsSnap] = await Promise.all([
+      const resultados = await Promise.allSettled([
         getDocs(collection(db, 'financeiro')),
         getDocs(collection(db, 'users')),
         getDocs(collection(db, 'cursos')),
@@ -30,12 +30,17 @@ export default function PainelAdmin() {
         getDocs(collection(db, 'presencas_bolsistas')),
       ]);
 
-      setFinanceiro(finSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setUsuarios(userSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setCursos(cursoSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setEventos(evSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setAvaliacoesBolsistas(avalSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setPresencasBolsistas(presBolsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const extrair = (res) =>
+        res.status === 'fulfilled'
+          ? res.value.docs.map((d) => ({ id: d.id, ...d.data() }))
+          : [];
+
+      setFinanceiro(extrair(resultados[0]));
+      setUsuarios(extrair(resultados[1]));
+      setCursos(extrair(resultados[2]));
+      setEventos(extrair(resultados[3]));
+      setAvaliacoesBolsistas(extrair(resultados[4]));
+      setPresencasBolsistas(extrair(resultados[5]));
     } catch (err) {
       console.error('Erro ao carregar dados do admin:', err);
     } finally {
