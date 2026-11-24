@@ -5,11 +5,34 @@ import { addDoc, collection, deleteDoc, doc, setDoc, updateDoc } from 'firebase/
 import {
   UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check,
   FolderOpen, Edit3, X, ShieldAlert, Search, Image as ImageIcon, Award, Lock,
-  Clock, TrendingUp, CheckSquare, Star, Save, Eye, EyeOff, KeyRound, Mail
+  Clock, TrendingUp, CheckSquare, Star, Save, Eye, EyeOff, KeyRound, Mail, MapPin, Users
 } from 'lucide-react';
 import { auth, db } from './firebase';
 import { useAuth } from './AuthContext';
 import CursoDetalhesAdmin from './CursoDetalhesAdmin';
+
+const STUDIO_COORDS = { lat: -9.9406271, lng: -67.8227701 };
+
+// Extrai latitude e longitude de qualquer link do Google Maps
+function extrairCoordsGoogleMaps(url) {
+  if (!url) return null;
+  // Padrão !3d-9.9406271!4d-67.8227701
+  const match3d4d = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+  if (match3d4d) {
+    return { lat: parseFloat(match3d4d[1]), lng: parseFloat(match3d4d[2]) };
+  }
+  // Padrão @-9.9405803,-67.8228358
+  const matchAt = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (matchAt) {
+    return { lat: parseFloat(matchAt[1]), lng: parseFloat(matchAt[2]) };
+  }
+  // Padrão ?q=-9.94,-67.82
+  const matchQ = url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (matchQ) {
+    return { lat: parseFloat(matchQ[1]), lng: parseFloat(matchQ[2]) };
+  }
+  return null;
+}
 
 const MODALIDADES_CURSO = [
   { id: 'fixo', label: 'Turma Fixa (Regular)' },
@@ -191,15 +214,19 @@ export default function AdminGestao({
   const [ementaInicial, setEmentaInicial] = useState('');
   const [cardCursoUrl, setCardCursoUrl] = useState('');
 
-  // Estados para Cadastro de Eventos
+  // Estados para Cadastro de Eventos (com Local GPS, Bolsistas Escalados e Chamada)
   const [tituloEvento, setTituloEvento] = useState('');
   const [dataEvento, setDataEvento] = useState('');
-  const [horaInicioEvento, setHoraInicioEvento] = useState('21:00');
-  const [horaFimEvento, setHoraFimEvento] = useState('02:00');
+  const [horaInicioEvento, setHoraInicioEvento] = useState('19:00');
+  const [horaFimEvento, setHoraFimEvento] = useState('22:00');
   const [localEvento, setLocalEvento] = useState('No Compasso Studio de Dança');
+  const [linkMapsEvento, setLinkMapsEvento] = useState('');
+  const [apenasEquipeBolsistas, setApenasEquipeBolsistas] = useState(false);
+  const [bolsistasEventoIds, setBolsistasEventoIds] = useState([]);
   const [valorIngresso, setValorIngresso] = useState('');
   const [descEvento, setDescEvento] = useState('');
   const [cardEventoUrl, setCardEventoUrl] = useState('');
+  const [eventoChamadaAbertoId, setEventoChamadaAbertoId] = useState(null);
 
   const idadeCalculada = calcularIdade(dataNascimento);
   const isMenorDe15 = idadeCalculada !== null && idadeCalculada < 15;
@@ -215,6 +242,10 @@ export default function AdminGestao({
     Array.isArray(u.roles) ? u.roles.includes('prof') : u.role === 'prof'
   );
 
+  const listaBolsistasSistema = usuarios.filter((u) =>
+    Array.isArray(u.roles) ? u.roles.includes('bolsista') : u.role === 'bolsista'
+  );
+
   const toggleRole = (roleId) => {
     setRolesSelecionados((prev) => {
       if (prev.includes(roleId)) {
@@ -227,6 +258,12 @@ export default function AdminGestao({
   const toggleFrenteAluno = (itemFrente) => {
     setFrentesAluno((prev) =>
       prev.includes(itemFrente) ? prev.filter((f) => f !== itemFrente) : [...prev, itemFrente]
+    );
+  };
+
+  const toggleBolsistaEvento = (bId) => {
+    setBolsistasEventoIds((prev) =>
+      prev.includes(bId) ? prev.filter((id) => id !== bId) : [...prev, bId]
     );
   };
 
@@ -279,7 +316,6 @@ export default function AdminGestao({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Dispara código/link de redefinição por e-mail sem precisar saber a senha antiga
   const handleEnviarResetSenhaAdmin = async (emailDestino) => {
     if (!emailDestino) {
       alert('Este usuário não possui um e-mail cadastrado.');
@@ -296,7 +332,6 @@ export default function AdminGestao({
     }
   };
 
-  // Atualiza referência de senha provisória e dispara reset automático
   const handleAtualizarSenhaAdminDireto = async () => {
     if (!usuarioEditandoId) return;
     if (!novaSenhaAdmin || novaSenhaAdmin.length < 6) {
@@ -501,6 +536,7 @@ export default function AdminGestao({
 
   const handleCriarEvento = async (e) => {
     e.preventDefault();
+    const coordsExtraidas = extrairCoordsGoogleMaps(linkMapsEvento) || STUDIO_COORDS;
     try {
       await addDoc(collection(db, 'eventos'), {
         titulo: tituloEvento,
@@ -508,21 +544,67 @@ export default function AdminGestao({
         horaInicio: horaInicioEvento,
         horaFim: horaFimEvento,
         local: localEvento,
-        valorIngresso: Number(valorIngresso || 0),
+        linkMaps: linkMapsEvento.trim(),
+        lat: coordsExtraidas.lat,
+        lng: coordsExtraidas.lng,
+        apenasEquipeBolsistas,
+        bolsistasIds: bolsistasEventoIds,
+        valorIngresso: apenasEquipeBolsistas ? 0 : Number(valorIngresso || 0),
         descricao: descEvento,
         cardUrl: cardEventoUrl,
-        inscricaoAberta: true,
+        inscricaoAberta: !apenasEquipeBolsistas,
         criadoEm: new Date().toISOString(),
       });
       setTituloEvento('');
       setDataEvento('');
+      setLinkMapsEvento('');
+      setApenasEquipeBolsistas(false);
+      setBolsistasEventoIds([]);
       setValorIngresso('');
       setDescEvento('');
       setCardEventoUrl('');
-      alert('Evento publicado!');
+      alert('Evento publicado com sucesso!');
       recarregar();
     } catch (err) {
       alert('Erro ao criar evento: ' + err.message);
+    }
+  };
+
+  // Marca ou atualiza presença de um bolsista em um evento direto pela Coordenação
+  const handleMarcarPresencaEventoAdmin = async (eventoObj, bolsistaObj, statusEscolhido) => {
+    const dataIsoEvento = eventoObj.data?.includes('/')
+      ? eventoObj.data.split('/').reverse().join('-')
+      : eventoObj.data || new Date().toISOString().split('T')[0];
+
+    const chaveAtiv = `${dataIsoEvento}_evento_${eventoObj.id}`;
+    const registroExistente = presencasBolsistas.find(
+      (p) => p.atividadeChave === chaveAtiv && p.bolsistaId === bolsistaObj.id
+    );
+
+    try {
+      if (registroExistente) {
+        await updateDoc(doc(db, 'presencas_bolsistas', registroExistente.id), {
+          status: statusEscolhido,
+          lancadoPorNome: `${userData?.nome || 'Coordenação'} (Lista do Evento)`,
+        });
+      } else {
+        await addDoc(collection(db, 'presencas_bolsistas'), {
+          bolsistaId: bolsistaObj.id,
+          bolsistaNome: bolsistaObj.nome,
+          eventoId: eventoObj.id,
+          atividadeChave: chaveAtiv,
+          data: dataIsoEvento,
+          tipoAtividade: `Evento: ${eventoObj.titulo}`,
+          descricao: `Local: ${eventoObj.local} (${eventoObj.horaInicio} às ${eventoObj.horaFim})`,
+          status: statusEscolhido,
+          lancadoPorId: user?.uid || '',
+          lancadoPorNome: `${userData?.nome || 'Coordenação'} (Lista do Evento)`,
+          criadoEm: new Date().toISOString(),
+        });
+      }
+      recarregar();
+    } catch (err) {
+      alert('Erro ao marcar presença no evento: ' + err.message);
     }
   };
 
@@ -566,7 +648,6 @@ export default function AdminGestao({
           </div>
 
           <form onSubmit={handleSalvarUsuario} autoComplete="off" className="space-y-3">
-            {/* Inputs fantasma para impedir preenchimento automático do navegador */}
             <input type="text" name="fake_user" style={{ display: 'none' }} tabIndex={-1} />
             <input type="password" name="fake_pass" style={{ display: 'none' }} tabIndex={-1} />
 
@@ -596,7 +677,6 @@ export default function AdminGestao({
               </div>
             </div>
 
-            {/* CAMPOS DE ENTRADA E VIGÊNCIA DA BOLSA */}
             {isBolsistaSelecionado && (
               <div className="p-3.5 rounded-xl bg-cyan-50/80 border border-cyan-300 space-y-2.5">
                 <p className="text-xs font-bold uppercase text-cyan-900 flex items-center gap-1.5">
@@ -906,7 +986,6 @@ export default function AdminGestao({
               </>
             )}
 
-            {/* SENHA INICIAL (COM OLHINHO E SEM AUTOFILL) */}
             {!usuarioEditandoId ? (
               <div>
                 <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
@@ -937,7 +1016,6 @@ export default function AdminGestao({
                 </div>
               </div>
             ) : (
-              /* SEÇÃO EXCLUSIVA DO ADMIN: ATUALIZAR SENHA SEM VERIFICAÇÃO DE SENHA ANTERIOR */
               <div className="p-3.5 rounded-xl bg-zinc-100 border border-zinc-300 space-y-2.5">
                 <p className="text-xs font-bold uppercase text-[#4A041C] flex items-center gap-1.5">
                   <KeyRound size={15} className="text-[#D81B60]" /> Redefinir / Atualizar Senha (Admin)
@@ -1140,11 +1218,7 @@ export default function AdminGestao({
   // ABA NOVA: BOLSISTAS, VIGÊNCIA, PRESENÇAS, INSIGHTS & PARECERES (ADMIN)
   // =========================================================================
   if (aba === 'bolsistas_admin') {
-    const bolsistas = usuarios.filter((u) => {
-      const roles = Array.isArray(u.roles) ? u.roles : [u.role];
-      return roles.includes('bolsista');
-    });
-
+    const bolsistas = listaBolsistasSistema;
     const alvoIdEfetivo = bolsistaAlvoFormId || bolsistas[0]?.id || '';
 
     const handleLancarPresencaAdmin = async (e) => {
@@ -1903,31 +1977,49 @@ export default function AdminGestao({
   }
 
   // =========================================================================
-  // ABA 3: EVENTOS
+  // ABA 3: EVENTOS & ESPETÁCULOS (COM LOCAL GPS E ESCALA DE BOLSISTAS)
   // =========================================================================
+  const coordsDetectadas = extrairCoordsGoogleMaps(linkMapsEvento);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
         <div className="flex items-center gap-2 mb-4 text-[#D81B60]">
           <Sparkles size={20} />
-          <h3 className="text-lg font-bold uppercase font-condensed">Inserir Novo Evento</h3>
+          <h3 className="text-lg font-bold uppercase font-condensed">Inserir Novo Evento / Espetáculo</h3>
         </div>
 
         <form onSubmit={handleCriarEvento} className="space-y-3">
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome do Baile / Mostra</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome do Baile / Mostra / Espetáculo</label>
             <input
               type="text"
               required
+              placeholder="Ex: Espetáculo de Fim de Ano / Baile"
               value={tituloEvento}
               onChange={(e) => setTituloEvento(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
             />
           </div>
 
+          <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={apenasEquipeBolsistas}
+              onChange={(e) => setApenasEquipeBolsistas(e.target.checked)}
+              className="mt-0.5 accent-[#4A041C]"
+            />
+            <span className="text-xs text-amber-950 leading-snug">
+              <strong>Espetáculo / Evento Interno (Sem inscrição de alunos)</strong>
+              <span className="block text-[11px] text-amber-800">
+                Cria o evento apenas para escala, localização GPS e controle de presença da equipe de bolsistas.
+              </span>
+            </span>
+          </label>
+
           <div>
             <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-              Card Oficial do Evento (Flyer / Cartaz)
+              Card Oficial do Evento (Opcional)
             </label>
             <label className="flex flex-col items-center justify-center w-full p-3 border-2 border-dashed border-zinc-300 rounded-xl cursor-pointer bg-zinc-50 hover:bg-pink-50/40 hover:border-[#D81B60] transition">
               <div className="flex items-center gap-2 text-xs font-bold text-[#4A041C]">
@@ -1957,21 +2049,22 @@ export default function AdminGestao({
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data do Evento</label>
             <input
-              type="text"
+              type="date"
               required
-              placeholder="Ex: 20/12/2026"
               value={dataEvento}
               onChange={(e) => setDataEvento(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
             />
           </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Hora Início</label>
               <input
                 type="time"
+                required
                 value={horaInicioEvento}
                 onChange={(e) => setHoraInicioEvento(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 p-2 text-sm text-zinc-900"
@@ -1981,91 +2074,238 @@ export default function AdminGestao({
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Hora Fim</label>
               <input
                 type="time"
+                required
                 value={horaFimEvento}
                 onChange={(e) => setHoraFimEvento(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 p-2 text-sm text-zinc-900"
               />
             </div>
           </div>
+
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Local</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome do Local / Teatro / Espaço</label>
             <input
               type="text"
               required
+              placeholder="Ex: Cine Teatro Recreio / Usina de Arte / Studio"
               value={localEvento}
               onChange={(e) => setLocalEvento(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
             />
           </div>
-          <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Valor Ingresso (R$)</label>
+
+          <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 space-y-1.5">
+            <label className="block text-[11px] font-bold uppercase text-zinc-700 flex items-center gap-1">
+              <MapPin size={13} className="text-[#D81B60]" /> Link do Google Maps do Local (Para GPS)
+            </label>
             <input
-              type="number"
-              step="0.01"
-              value={valorIngresso}
-              onChange={(e) => setValorIngresso(e.target.value)}
-              className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+              type="url"
+              placeholder="Cole a URL do Google Maps (ou deixe vazio para Studio)"
+              value={linkMapsEvento}
+              onChange={(e) => setLinkMapsEvento(e.target.value)}
+              className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs text-zinc-900"
             />
+            <p className="text-[10px] font-semibold text-zinc-500">
+              {linkMapsEvento
+                ? coordsDetectadas
+                  ? `✅ Coordenadas detectadas: ${coordsDetectadas.lat}, ${coordsDetectadas.lng}`
+                  : '⚠️ Link sem coordenadas exatas — será usado o GPS padrão do Studio.'
+                : '📍 Usando GPS padrão do Studio No Compasso (Estr. das Placas, 1909).'}
+            </p>
           </div>
+
+          {/* ESCALAR BOLSISTAS PARA O EVENTO */}
+          {listaBolsistasSistema.length > 0 && (
+            <div className="p-3 rounded-xl bg-cyan-50/70 border border-cyan-300 space-y-2">
+              <label className="block text-xs font-bold uppercase text-cyan-950 flex items-center gap-1.5">
+                <Users size={14} /> Escalar Bolsistas para este Evento ({bolsistasEventoIds.length})
+              </label>
+              <div className="max-h-36 overflow-y-auto space-y-1">
+                {listaBolsistasSistema.map((b) => {
+                  const marcado = bolsistasEventoIds.includes(b.id);
+                  return (
+                    <label
+                      key={b.id}
+                      className="flex items-center gap-2 p-1.5 rounded-lg bg-white border border-cyan-200 text-xs cursor-pointer hover:bg-cyan-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={marcado}
+                        onChange={() => toggleBolsistaEvento(b.id)}
+                        className="accent-[#4A041C]"
+                      />
+                      <span className="font-semibold text-zinc-800">{b.nome}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {!apenasEquipeBolsistas && (
+            <div>
+              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Valor Ingresso (R$)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={valorIngresso}
+                onChange={(e) => setValorIngresso(e.target.value)}
+                className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+              />
+            </div>
+          )}
+
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Descrição</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Descrição / Observações</label>
             <textarea
-              rows="3"
+              rows="2"
               value={descEvento}
               onChange={(e) => setDescEvento(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
             />
           </div>
+
           <button
             type="submit"
             className="w-full rounded-xl bg-[#D81B60] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#AD1457]"
           >
-            Publicar Evento & Gerar Link
+            Publicar Evento
           </button>
         </form>
       </div>
 
       <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
         <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900 mb-4">
-          Eventos Cadastrados ({eventos.length})
+          Eventos & Espetáculos Cadastrados ({eventos.length})
         </h3>
-        <div className="space-y-3">
-          {eventos.map((ev) => (
-            <div key={ev.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-zinc-200 bg-zinc-50">
-              <div className="flex items-center gap-3.5">
-                {ev.cardUrl && (
-                  <img
-                    src={ev.cardUrl}
-                    alt={ev.titulo}
-                    className="w-16 h-16 rounded-xl object-cover border border-zinc-300 shrink-0"
-                  />
-                )}
-                <div>
-                  <h4 className="font-bold text-zinc-900 flex items-center gap-2">
-                    <Calendar size={16} className="text-[#D81B60]" /> {ev.titulo}
-                  </h4>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    {ev.data} ({ev.horaInicio} às {ev.horaFim}) • {ev.local} • Ingresso: R$ {ev.valorIngresso}
-                  </p>
+        <div className="space-y-4">
+          {eventos.map((ev) => {
+            const bolsistasEscalados = listaBolsistasSistema.filter((b) =>
+              Array.isArray(ev.bolsistasIds) ? ev.bolsistasIds.includes(b.id) : false
+            );
+            const chamadaAberta = eventoChamadaAbertoId === ev.id;
+            const dataIsoEvento = ev.data?.includes('/')
+              ? ev.data.split('/').reverse().join('-')
+              : ev.data || '';
+            const chaveAtiv = `${dataIsoEvento}_evento_${ev.id}`;
+
+            return (
+              <div key={ev.id} className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3.5">
+                    {ev.cardUrl && (
+                      <img
+                        src={ev.cardUrl}
+                        alt={ev.titulo}
+                        className="w-16 h-16 rounded-xl object-cover border border-zinc-300 shrink-0"
+                      />
+                    )}
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="font-bold text-zinc-900 flex items-center gap-1.5">
+                          <Calendar size={16} className="text-[#D81B60]" /> {ev.titulo}
+                        </h4>
+                        {ev.apenasEquipeBolsistas && (
+                          <span className="px-2 py-0.5 rounded bg-amber-200 text-amber-950 text-[10px] font-bold uppercase">
+                            Equipe / Bolsistas
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-zinc-600 mt-1">
+                        📅 {dataIsoEvento.split('-').reverse().join('/')} ({ev.horaInicio} às {ev.horaFim}) • 📍 <strong>{ev.local}</strong>
+                        {!ev.apenasEquipeBolsistas && ` • Ingresso: R$ ${ev.valorIngresso}`}
+                      </p>
+                      <p className="text-[11px] font-semibold text-cyan-800 mt-0.5">
+                        👥 Bolsistas escalados: {bolsistasEscalados.length}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEventoChamadaAbertoId(chamadaAberta ? null : ev.id)}
+                      className="flex items-center gap-1.5 rounded-lg bg-[#4A041C] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2D0210]"
+                    >
+                      <CheckSquare size={14} />
+                      {chamadaAberta ? 'Fechar Lista' : 'Lista Bolsistas'}
+                    </button>
+
+                    {!ev.apenasEquipeBolsistas && (
+                      <button
+                        onClick={() => copiarLinkInscricao('evento', ev.id)}
+                        className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-1.5 text-xs font-bold text-[#D81B60] hover:bg-pink-100"
+                      >
+                        {copiadoId === ev.id ? <Check size={14} /> : <Link2 size={14} />}
+                        {copiadoId === ev.id ? 'Copiado!' : 'Link Ingresso'}
+                      </button>
+                    )}
+
+                    <button
+                      onClick={async () => { await deleteDoc(doc(db, 'eventos', ev.id)); recarregar(); }}
+                      className="text-zinc-400 hover:text-red-600 p-2"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </div>
+
+                {/* Lista de Presença Rápida de Bolsistas no Evento */}
+                {chamadaAberta && (
+                  <div className="p-3.5 rounded-xl bg-white border border-zinc-200 space-y-2">
+                    <p className="text-xs font-bold uppercase text-[#4A041C]">
+                      Chamada dos Bolsistas no Evento ({ev.local})
+                    </p>
+                    {bolsistasEscalados.length === 0 ? (
+                      <p className="text-xs text-zinc-500">
+                        Nenhum bolsista foi escalado neste evento.
+                      </p>
+                    ) : (
+                      <div className="divide-y divide-zinc-100">
+                        {bolsistasEscalados.map((b) => {
+                          const reg = presencasBolsistas.find(
+                            (p) => p.atividadeChave === chaveAtiv && p.bolsistaId === b.id
+                          );
+                          return (
+                            <div key={b.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                              <div>
+                                <strong className="text-zinc-900">{b.nome}</strong>
+                                {reg && (
+                                  <span className="block text-[10px] text-zinc-500">
+                                    Status atual: <strong>{reg.status.toUpperCase()}</strong> ({reg.lancadoPorNome})
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex gap-1.5">
+                                {[
+                                  { id: 'presente', label: '✅ Presente', cor: 'bg-emerald-600 text-white' },
+                                  { id: 'falta', label: '❌ Falta', cor: 'bg-red-600 text-white' },
+                                  { id: 'justificada', label: '⚠️ Justificada', cor: 'bg-amber-500 text-white' },
+                                ].map((st) => (
+                                  <button
+                                    key={st.id}
+                                    type="button"
+                                    onClick={() => handleMarcarPresencaEventoAdmin(ev, b, st.id)}
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition ${
+                                      reg?.status === st.id
+                                        ? st.cor
+                                        : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                                    }`}
+                                  >
+                                    {st.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => copiarLinkInscricao('evento', ev.id)}
-                  className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-1.5 text-xs font-bold text-[#D81B60] hover:bg-pink-100"
-                >
-                  {copiadoId === ev.id ? <Check size={14} /> : <Link2 size={14} />}
-                  {copiadoId === ev.id ? 'Copiado!' : 'Link Ingresso'}
-                </button>
-                <button
-                  onClick={async () => { await deleteDoc(doc(db, 'eventos', ev.id)); recarregar(); }}
-                  className="text-zinc-400 hover:text-red-600 p-2"
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
