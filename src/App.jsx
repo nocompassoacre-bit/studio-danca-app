@@ -4,6 +4,7 @@ import ProtectedRoute from './ProtectedRoute';
 import HomePublica from './HomePublica';
 import PainelAdmin from './PainelAdmin';
 import PainelProfessor from './PainelProfessor';
+import PainelBolsista from './PainelBolsista';
 import InscricaoPublica from './InscricaoPublica';
 
 const PlaceholderPainel = ({ titulo }) => (
@@ -48,7 +49,7 @@ export default function App() {
             path="/bolsista/*"
             element={
               <ProtectedRoute allowedRole="bolsista">
-                <PlaceholderPainel titulo="Portal do Bolsista (Etapa 3)" />
+                <PainelBolsista />
               </ProtectedRoute>
             }
           />
