@@ -10,6 +10,7 @@ import {
 import { auth, db } from './firebase';
 import { useAuth } from './AuthContext';
 import CursoDetalhesAdmin from './CursoDetalhesAdmin';
+import { GeradorLinkCadastroUnico } from './AdminConvitesMensagens';
 
 const STUDIO_COORDS = { lat: -9.9406271, lng: -67.8227701 };
 
