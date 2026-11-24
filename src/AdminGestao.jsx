@@ -13,20 +13,16 @@ import CursoDetalhesAdmin from './CursoDetalhesAdmin';
 
 const STUDIO_COORDS = { lat: -9.9406271, lng: -67.8227701 };
 
-// Extrai latitude e longitude de qualquer link do Google Maps
 function extrairCoordsGoogleMaps(url) {
   if (!url) return null;
-  // Padrão !3d-9.9406271!4d-67.8227701
   const match3d4d = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
   if (match3d4d) {
     return { lat: parseFloat(match3d4d[1]), lng: parseFloat(match3d4d[2]) };
   }
-  // Padrão @-9.9405803,-67.8228358
   const matchAt = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
   if (matchAt) {
     return { lat: parseFloat(matchAt[1]), lng: parseFloat(matchAt[2]) };
   }
-  // Padrão ?q=-9.94,-67.82
   const matchQ = url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
   if (matchQ) {
     return { lat: parseFloat(matchQ[1]), lng: parseFloat(matchQ[2]) };
@@ -140,7 +136,7 @@ export default function AdminGestao({
   usuarios,
   cursos,
   eventos,
-  financeiro,
+  financeiro = [],
   avaliacoesBolsistas = [],
   presencasBolsistas = [],
   recarregar,
@@ -214,19 +210,21 @@ export default function AdminGestao({
   const [ementaInicial, setEmentaInicial] = useState('');
   const [cardCursoUrl, setCardCursoUrl] = useState('');
 
-  // Estados para Cadastro de Eventos (com Local GPS, Bolsistas Escalados e Chamada)
+  // Estados para Cadastro de Eventos, Bilheteria Multi-Dias e Escala de Bolsistas
   const [tituloEvento, setTituloEvento] = useState('');
-  const [dataEvento, setDataEvento] = useState('');
-  const [horaInicioEvento, setHoraInicioEvento] = useState('19:00');
-  const [horaFimEvento, setHoraFimEvento] = useState('22:00');
+  const [sessoesEvento, setSessoesEvento] = useState([
+    { id: 'sessao_1', data: '', horaInicio: '19:00', horaFim: '22:00', capacidadeTotal: 100 },
+  ]);
   const [localEvento, setLocalEvento] = useState('No Compasso Studio de Dança');
   const [linkMapsEvento, setLinkMapsEvento] = useState('');
   const [apenasEquipeBolsistas, setApenasEquipeBolsistas] = useState(false);
   const [bolsistasEventoIds, setBolsistasEventoIds] = useState([]);
-  const [valorIngresso, setValorIngresso] = useState('');
+  const [valorInteiraEvento, setValorInteiraEvento] = useState('');
+  const [valorMeiaEvento, setValorMeiaEvento] = useState('');
   const [descEvento, setDescEvento] = useState('');
   const [cardEventoUrl, setCardEventoUrl] = useState('');
   const [eventoChamadaAbertoId, setEventoChamadaAbertoId] = useState(null);
+  const [eventoBilheteriaAbertoId, setEventoBilheteriaAbertoId] = useState(null);
 
   const idadeCalculada = calcularIdade(dataNascimento);
   const isMenorDe15 = idadeCalculada !== null && idadeCalculada < 15;
@@ -265,6 +263,29 @@ export default function AdminGestao({
     setBolsistasEventoIds((prev) =>
       prev.includes(bId) ? prev.filter((id) => id !== bId) : [...prev, bId]
     );
+  };
+
+  const adicionarSessaoEvento = () => {
+    setSessoesEvento((prev) => [
+      ...prev,
+      {
+        id: `sessao_${Date.now()}`,
+        data: '',
+        horaInicio: '19:00',
+        horaFim: '22:00',
+        capacidadeTotal: 100,
+      },
+    ]);
+  };
+
+  const atualizarSessaoEvento = (idx, campo, valor) => {
+    setSessoesEvento((prev) =>
+      prev.map((s, i) => (i === idx ? { ...s, [campo]: valor } : s))
+    );
+  };
+
+  const removerSessaoEvento = (idx) => {
+    setSessoesEvento((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
   };
 
   const limparFormularioUsuario = () => {
@@ -537,40 +558,57 @@ export default function AdminGestao({
   const handleCriarEvento = async (e) => {
     e.preventDefault();
     const coordsExtraidas = extrairCoordsGoogleMaps(linkMapsEvento) || STUDIO_COORDS;
+    const sessoesTratadas = sessoesEvento.map((s) => ({
+      ...s,
+      capacidadeTotal: Number(s.capacidadeTotal || 0),
+    }));
+    const primeiraSessao = sessoesTratadas[0] || {};
+    const capacidadeGeral = sessoesTratadas.reduce(
+      (acc, s) => acc + Number(s.capacidadeTotal || 0),
+      0
+    );
+
     try {
       await addDoc(collection(db, 'eventos'), {
         titulo: tituloEvento,
-        data: dataEvento,
-        horaInicio: horaInicioEvento,
-        horaFim: horaFimEvento,
+        data: primeiraSessao.data || '',
+        horaInicio: primeiraSessao.horaInicio || '19:00',
+        horaFim: primeiraSessao.horaFim || '22:00',
+        sessoes: sessoesTratadas,
+        capacidadeGeral,
         local: localEvento,
         linkMaps: linkMapsEvento.trim(),
         lat: coordsExtraidas.lat,
         lng: coordsExtraidas.lng,
         apenasEquipeBolsistas,
         bolsistasIds: bolsistasEventoIds,
-        valorIngresso: apenasEquipeBolsistas ? 0 : Number(valorIngresso || 0),
+        valorInteira: apenasEquipeBolsistas ? 0 : Number(valorInteiraEvento || 0),
+        valorMeia: apenasEquipeBolsistas ? 0 : Number(valorMeiaEvento || 0),
+        valorIngresso: apenasEquipeBolsistas ? 0 : Number(valorInteiraEvento || 0),
         descricao: descEvento,
         cardUrl: cardEventoUrl,
         inscricaoAberta: !apenasEquipeBolsistas,
         criadoEm: new Date().toISOString(),
       });
+
       setTituloEvento('');
-      setDataEvento('');
+      setSessoesEvento([
+        { id: 'sessao_1', data: '', horaInicio: '19:00', horaFim: '22:00', capacidadeTotal: 100 },
+      ]);
       setLinkMapsEvento('');
       setApenasEquipeBolsistas(false);
       setBolsistasEventoIds([]);
-      setValorIngresso('');
+      setValorInteiraEvento('');
+      setValorMeiaEvento('');
       setDescEvento('');
       setCardEventoUrl('');
-      alert('Evento publicado com sucesso!');
+      alert('Evento / Bilheteria publicado com sucesso!');
       recarregar();
     } catch (err) {
       alert('Erro ao criar evento: ' + err.message);
     }
   };
 
-  // Marca ou atualiza presença de um bolsista em um evento direto pela Coordenação
   const handleMarcarPresencaEventoAdmin = async (eventoObj, bolsistaObj, statusEscolhido) => {
     const dataIsoEvento = eventoObj.data?.includes('/')
       ? eventoObj.data.split('/').reverse().join('-')
@@ -1977,7 +2015,7 @@ export default function AdminGestao({
   }
 
   // =========================================================================
-  // ABA 3: EVENTOS & ESPETÁCULOS (COM LOCAL GPS E ESCALA DE BOLSISTAS)
+  // ABA 3: EVENTOS, BILHETERIA MERCADO PAGO & ESCALA DE BOLSISTAS
   // =========================================================================
   const coordsDetectadas = extrairCoordsGoogleMaps(linkMapsEvento);
 
@@ -1986,16 +2024,18 @@ export default function AdminGestao({
       <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit">
         <div className="flex items-center gap-2 mb-4 text-[#D81B60]">
           <Sparkles size={20} />
-          <h3 className="text-lg font-bold uppercase font-condensed">Inserir Novo Evento / Espetáculo</h3>
+          <h3 className="text-lg font-bold uppercase font-condensed">Novo Evento / Espetáculo</h3>
         </div>
 
         <form onSubmit={handleCriarEvento} className="space-y-3">
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome do Baile / Mostra / Espetáculo</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+              Nome do Baile / Mostra / Espetáculo
+            </label>
             <input
               type="text"
               required
-              placeholder="Ex: Espetáculo de Fim de Ano / Baile"
+              placeholder="Ex: Espetáculo de Fim de Ano"
               value={tituloEvento}
               onChange={(e) => setTituloEvento(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
@@ -2010,12 +2050,135 @@ export default function AdminGestao({
               className="mt-0.5 accent-[#4A041C]"
             />
             <span className="text-xs text-amber-950 leading-snug">
-              <strong>Espetáculo / Evento Interno (Sem inscrição de alunos)</strong>
+              <strong>Evento Interno / Sem venda de ingressos</strong>
               <span className="block text-[11px] text-amber-800">
-                Cria o evento apenas para escala, localização GPS e controle de presença da equipe de bolsistas.
+                Cria o evento apenas para escala GPS e chamada da equipe de bolsistas.
               </span>
             </span>
           </label>
+
+          {/* DIAS / SESSÕES DO EVENTO E LOTAÇÃO */}
+          <div className="p-3.5 rounded-xl bg-pink-50/60 border border-[#D81B60]/30 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase text-[#4A041C]">
+                Dias / Sessões & Lotação ({sessoesEvento.length})
+              </label>
+              <button
+                type="button"
+                onClick={adicionarSessaoEvento}
+                className="text-[11px] font-bold text-[#D81B60] hover:underline"
+              >
+                + Adicionar Outro Dia
+              </button>
+            </div>
+
+            {sessoesEvento.map((sessao, idx) => (
+              <div key={sessao.id} className="p-2.5 rounded-lg bg-white border border-zinc-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase text-zinc-500">
+                    Dia / Sessão {idx + 1}
+                  </span>
+                  {sessoesEvento.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removerSessaoEvento(idx)}
+                      className="text-red-500 hover:text-red-700 text-[10px] font-bold"
+                    >
+                      Remover
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-500">Data</label>
+                    <input
+                      type="date"
+                      required
+                      value={sessao.data}
+                      onChange={(e) => atualizarSessaoEvento(idx, 'data', e.target.value)}
+                      className="w-full rounded-lg border border-zinc-300 p-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                      Qtd. Ingressos
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={sessao.capacidadeTotal}
+                      onChange={(e) =>
+                        atualizarSessaoEvento(idx, 'capacidadeTotal', e.target.value)
+                      }
+                      className="w-full rounded-lg border border-zinc-300 p-1.5 text-xs font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-500">Início</label>
+                    <input
+                      type="time"
+                      required
+                      value={sessao.horaInicio}
+                      onChange={(e) => atualizarSessaoEvento(idx, 'horaInicio', e.target.value)}
+                      className="w-full rounded-lg border border-zinc-300 p-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-zinc-500">Término</label>
+                    <input
+                      type="time"
+                      required
+                      value={sessao.horaFim}
+                      onChange={(e) => atualizarSessaoEvento(idx, 'horaFim', e.target.value)}
+                      className="w-full rounded-lg border border-zinc-300 p-1.5 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {!apenasEquipeBolsistas && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                  Valor Inteira (R$)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  placeholder="40.00"
+                  value={valorInteiraEvento}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setValorInteiraEvento(val);
+                    if (val) setValorMeiaEvento((Number(val) / 2).toFixed(2));
+                  }}
+                  className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                  Valor Meia (R$)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  placeholder="20.00"
+                  value={valorMeiaEvento}
+                  onChange={(e) => setValorMeiaEvento(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
@@ -2024,7 +2187,7 @@ export default function AdminGestao({
             <label className="flex flex-col items-center justify-center w-full p-3 border-2 border-dashed border-zinc-300 rounded-xl cursor-pointer bg-zinc-50 hover:bg-pink-50/40 hover:border-[#D81B60] transition">
               <div className="flex items-center gap-2 text-xs font-bold text-[#4A041C]">
                 <ImageIcon size={16} className="text-[#D81B60]" />
-                <span>{cardEventoUrl ? 'Trocar Cartaz do Evento' : 'Selecionar Arte do Evento (JPG/PNG)'}</span>
+                <span>{cardEventoUrl ? 'Trocar Cartaz' : 'Selecionar Arte (JPG/PNG)'}</span>
               </div>
               <input
                 type="file"
@@ -2033,14 +2196,13 @@ export default function AdminGestao({
                 onChange={(e) => processarImagemCard(e.target.files[0], setCardEventoUrl)}
               />
             </label>
-
             {cardEventoUrl && (
               <div className="relative mt-2 rounded-xl overflow-hidden border border-zinc-200">
-                <img src={cardEventoUrl} alt="Prévia do Evento" className="w-full h-36 object-cover" />
+                <img src={cardEventoUrl} alt="Prévia" className="w-full h-32 object-cover" />
                 <button
                   type="button"
                   onClick={() => setCardEventoUrl('')}
-                  className="absolute top-2 right-2 bg-black/70 text-white p-1 rounded-full hover:bg-red-600"
+                  className="absolute top-2 right-2 bg-black/70 text-white p-1 rounded-full"
                 >
                   <X size={14} />
                 </button>
@@ -2049,45 +2211,13 @@ export default function AdminGestao({
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data do Evento</label>
-            <input
-              type="date"
-              required
-              value={dataEvento}
-              onChange={(e) => setDataEvento(e.target.value)}
-              className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Hora Início</label>
-              <input
-                type="time"
-                required
-                value={horaInicioEvento}
-                onChange={(e) => setHoraInicioEvento(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 p-2 text-sm text-zinc-900"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Hora Fim</label>
-              <input
-                type="time"
-                required
-                value={horaFimEvento}
-                onChange={(e) => setHoraFimEvento(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 p-2 text-sm text-zinc-900"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome do Local / Teatro / Espaço</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+              Local / Teatro / Espaço
+            </label>
             <input
               type="text"
               required
-              placeholder="Ex: Cine Teatro Recreio / Usina de Arte / Studio"
+              placeholder="Ex: Cine Teatro Recreio / Studio No Compasso"
               value={localEvento}
               onChange={(e) => setLocalEvento(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
@@ -2096,11 +2226,11 @@ export default function AdminGestao({
 
           <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 space-y-1.5">
             <label className="block text-[11px] font-bold uppercase text-zinc-700 flex items-center gap-1">
-              <MapPin size={13} className="text-[#D81B60]" /> Link do Google Maps do Local (Para GPS)
+              <MapPin size={13} className="text-[#D81B60]" /> Link Google Maps do Local (GPS)
             </label>
             <input
               type="url"
-              placeholder="Cole a URL do Google Maps (ou deixe vazio para Studio)"
+              placeholder="Cole a URL do Google Maps (ou vazio para Studio)"
               value={linkMapsEvento}
               onChange={(e) => setLinkMapsEvento(e.target.value)}
               className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs text-zinc-900"
@@ -2114,49 +2244,32 @@ export default function AdminGestao({
             </p>
           </div>
 
-          {/* ESCALAR BOLSISTAS PARA O EVENTO */}
           {listaBolsistasSistema.length > 0 && (
             <div className="p-3 rounded-xl bg-cyan-50/70 border border-cyan-300 space-y-2">
               <label className="block text-xs font-bold uppercase text-cyan-950 flex items-center gap-1.5">
-                <Users size={14} /> Escalar Bolsistas para este Evento ({bolsistasEventoIds.length})
+                <Users size={14} /> Escalar Bolsistas ({bolsistasEventoIds.length})
               </label>
-              <div className="max-h-36 overflow-y-auto space-y-1">
-                {listaBolsistasSistema.map((b) => {
-                  const marcado = bolsistasEventoIds.includes(b.id);
-                  return (
-                    <label
-                      key={b.id}
-                      className="flex items-center gap-2 p-1.5 rounded-lg bg-white border border-cyan-200 text-xs cursor-pointer hover:bg-cyan-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={marcado}
-                        onChange={() => toggleBolsistaEvento(b.id)}
-                        className="accent-[#4A041C]"
-                      />
-                      <span className="font-semibold text-zinc-800">{b.nome}</span>
-                    </label>
-                  );
-                })}
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {listaBolsistasSistema.map((b) => (
+                  <label
+                    key={b.id}
+                    className="flex items-center gap-2 p-1.5 rounded-lg bg-white border border-cyan-200 text-xs cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={bolsistasEventoIds.includes(b.id)}
+                      onChange={() => toggleBolsistaEvento(b.id)}
+                      className="accent-[#4A041C]"
+                    />
+                    <span className="font-semibold text-zinc-800">{b.nome}</span>
+                  </label>
+                ))}
               </div>
             </div>
           )}
 
-          {!apenasEquipeBolsistas && (
-            <div>
-              <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Valor Ingresso (R$)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={valorIngresso}
-                onChange={(e) => setValorIngresso(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
-              />
-            </div>
-          )}
-
           <div>
-            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Descrição / Observações</label>
+            <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Descrição</label>
             <textarea
               rows="2"
               value={descEvento}
@@ -2169,25 +2282,56 @@ export default function AdminGestao({
             type="submit"
             className="w-full rounded-xl bg-[#D81B60] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#AD1457]"
           >
-            Publicar Evento
+            Publicar Evento & Bilheteria
           </button>
         </form>
       </div>
 
+      {/* LISTA DE EVENTOS + PAINEL DE BILHETERIA POR DIA */}
       <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
         <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900 mb-4">
-          Eventos & Espetáculos Cadastrados ({eventos.length})
+          Eventos, Bilheteria & Escalas ({eventos.length})
         </h3>
         <div className="space-y-4">
           {eventos.map((ev) => {
+            const sessoes =
+              Array.isArray(ev.sessoes) && ev.sessoes.length > 0
+                ? ev.sessoes
+                : [
+                    {
+                      id: 'sessao_1',
+                      data: ev.data,
+                      horaInicio: ev.horaInicio,
+                      horaFim: ev.horaFim,
+                      capacidadeTotal: ev.capacidadeGeral || 100,
+                    },
+                  ];
+
+            const vendasEvento = (financeiro || []).filter(
+              (f) => f.eventoId === ev.id || f.referenciaId === ev.id
+            );
+
+            const totalCap = sessoes.reduce(
+              (acc, s) => acc + Number(s.capacidadeTotal || 0),
+              0
+            );
+            const totalInteiras = vendasEvento.reduce(
+              (acc, v) => acc + Number(v.qtdInteira ?? (v.tipoIngresso === 'meia' ? 0 : 1)),
+              0
+            );
+            const totalMeias = vendasEvento.reduce(
+              (acc, v) => acc + Number(v.qtdMeia ?? (v.tipoIngresso === 'meia' ? 1 : 0)),
+              0
+            );
+            const totalVendidos = totalInteiras + totalMeias;
+            const totalRestantes = Math.max(0, totalCap - totalVendidos);
+
+            const bilheteriaAberta = eventoBilheteriaAbertoId === ev.id;
+            const chamadaAberta = eventoChamadaAbertoId === ev.id;
+
             const bolsistasEscalados = listaBolsistasSistema.filter((b) =>
               Array.isArray(ev.bolsistasIds) ? ev.bolsistasIds.includes(b.id) : false
             );
-            const chamadaAberta = eventoChamadaAbertoId === ev.id;
-            const dataIsoEvento = ev.data?.includes('/')
-              ? ev.data.split('/').reverse().join('-')
-              : ev.data || '';
-            const chaveAtiv = `${dataIsoEvento}_evento_${ev.id}`;
 
             return (
               <div key={ev.id} className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-3">
@@ -2205,30 +2349,56 @@ export default function AdminGestao({
                         <h4 className="font-bold text-zinc-900 flex items-center gap-1.5">
                           <Calendar size={16} className="text-[#D81B60]" /> {ev.titulo}
                         </h4>
-                        {ev.apenasEquipeBolsistas && (
+                        {ev.apenasEquipeBolsistas ? (
                           <span className="px-2 py-0.5 rounded bg-amber-200 text-amber-950 text-[10px] font-bold uppercase">
                             Equipe / Bolsistas
                           </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 text-[10px] font-bold uppercase">
+                            Bilheteria Ativa ({sessoes.length} dia(s))
+                          </span>
                         )}
                       </div>
+
                       <p className="text-xs text-zinc-600 mt-1">
-                        📅 {dataIsoEvento.split('-').reverse().join('/')} ({ev.horaInicio} às {ev.horaFim}) • 📍 <strong>{ev.local}</strong>
-                        {!ev.apenasEquipeBolsistas && ` • Ingresso: R$ ${ev.valorIngresso}`}
+                        📍 <strong>{ev.local}</strong>
+                        {!ev.apenasEquipeBolsistas &&
+                          ` • Inteira: R$ ${ev.valorInteira ?? ev.valorIngresso} | Meia: R$ ${ev.valorMeia ?? (Number(ev.valorIngresso || 0) / 2).toFixed(2)}`}
                       </p>
-                      <p className="text-[11px] font-semibold text-cyan-800 mt-0.5">
-                        👥 Bolsistas escalados: {bolsistasEscalados.length}
-                      </p>
+
+                      {!ev.apenasEquipeBolsistas && (
+                        <div className="flex flex-wrap gap-2 mt-1.5 text-[11px] font-bold">
+                          <span className="px-2 py-0.5 rounded bg-white border border-zinc-300 text-zinc-800">
+                            🎟️ Vendidos: {totalVendidos}/{totalCap} ({totalInteiras} Inteira • {totalMeias} Meia)
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-cyan-50 border border-cyan-300 text-cyan-900">
+                            Disponíveis: {totalRestantes}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {!ev.apenasEquipeBolsistas && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEventoBilheteriaAbertoId(bilheteriaAberta ? null : ev.id)
+                        }
+                        className="flex items-center gap-1.5 rounded-lg bg-[#D81B60] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#AD1457]"
+                      >
+                        {bilheteriaAberta ? 'Ocultar Bilheteria' : 'Relatório Bilheteria'}
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => setEventoChamadaAbertoId(chamadaAberta ? null : ev.id)}
                       className="flex items-center gap-1.5 rounded-lg bg-[#4A041C] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2D0210]"
                     >
                       <CheckSquare size={14} />
-                      {chamadaAberta ? 'Fechar Lista' : 'Lista Bolsistas'}
+                      {chamadaAberta ? 'Fechar Lista' : `Bolsistas (${bolsistasEscalados.length})`}
                     </button>
 
                     {!ev.apenasEquipeBolsistas && (
@@ -2237,12 +2407,15 @@ export default function AdminGestao({
                         className="flex items-center gap-1.5 rounded-lg border border-[#D81B60]/40 bg-pink-50 px-3 py-1.5 text-xs font-bold text-[#D81B60] hover:bg-pink-100"
                       >
                         {copiadoId === ev.id ? <Check size={14} /> : <Link2 size={14} />}
-                        {copiadoId === ev.id ? 'Copiado!' : 'Link Ingresso'}
+                        {copiadoId === ev.id ? 'Copiado!' : 'Link Compra'}
                       </button>
                     )}
 
                     <button
-                      onClick={async () => { await deleteDoc(doc(db, 'eventos', ev.id)); recarregar(); }}
+                      onClick={async () => {
+                        await deleteDoc(doc(db, 'eventos', ev.id));
+                        recarregar();
+                      }}
                       className="text-zinc-400 hover:text-red-600 p-2"
                     >
                       <Trash2 size={18} />
@@ -2250,32 +2423,127 @@ export default function AdminGestao({
                   </div>
                 </div>
 
-                {/* Lista de Presença Rápida de Bolsistas no Evento */}
+                {/* RELATÓRIO DETALHADO POR DIA DO EVENTO */}
+                {bilheteriaAberta && (
+                  <div className="p-4 rounded-xl bg-white border border-zinc-200 space-y-3">
+                    <h5 className="text-xs font-bold uppercase text-[#4A041C]">
+                      Resumo de Ingressos por Dia / Sessão
+                    </h5>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {sessoes.map((s, idx) => {
+                        const vendasDia = vendasEvento.filter(
+                          (v) => v.sessaoId === s.id || v.dataSessao === s.data
+                        );
+                        const intDia = vendasDia.reduce(
+                          (acc, v) => acc + Number(v.qtdInteira ?? (v.tipoIngresso === 'meia' ? 0 : 1)),
+                          0
+                        );
+                        const meiaDia = vendasDia.reduce(
+                          (acc, v) => acc + Number(v.qtdMeia ?? (v.tipoIngresso === 'meia' ? 1 : 0)),
+                          0
+                        );
+                        const vendidosDia = intDia + meiaDia;
+                        const capDia = Number(s.capacidadeTotal || 0);
+                        const restDia = Math.max(0, capDia - vendidosDia);
+                        const receitaDia = vendasDia.reduce(
+                          (acc, v) => acc + Number(v.valor || 0),
+                          0
+                        );
+
+                        return (
+                          <div
+                            key={s.id || idx}
+                            className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 text-xs space-y-1.5"
+                          >
+                            <div className="flex justify-between font-bold text-[#4A041C]">
+                              <span>
+                                Dia {idx + 1}: {s.data?.split('-').reverse().join('/')} ({s.horaInicio} às {s.horaFim})
+                              </span>
+                              <span>R$ {receitaDia.toFixed(2)}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1 text-center pt-1">
+                              <div className="p-1.5 rounded bg-white border border-zinc-200">
+                                <span className="block text-[10px] text-zinc-500">Inteiras</span>
+                                <strong>{intDia}</strong>
+                              </div>
+                              <div className="p-1.5 rounded bg-white border border-zinc-200">
+                                <span className="block text-[10px] text-zinc-500">Meias</span>
+                                <strong>{meiaDia}</strong>
+                              </div>
+                              <div className="p-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-900">
+                                <span className="block text-[10px]">Disponíveis</span>
+                                <strong>{restDia} / {capDia}</strong>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pt-2 border-t border-zinc-200">
+                      <p className="text-[11px] font-bold uppercase text-zinc-600 mb-2">
+                        Lista de Compradores ({vendasEvento.length})
+                      </p>
+                      {vendasEvento.length === 0 ? (
+                        <p className="text-xs text-zinc-400">Nenhum ingresso vendido ainda.</p>
+                      ) : (
+                        <div className="max-h-48 overflow-y-auto divide-y divide-zinc-100 text-xs">
+                          {vendasEvento.map((v) => (
+                            <div key={v.id} className="py-2 flex items-center justify-between">
+                              <div>
+                                <strong className="text-zinc-900">{v.alunoNomeAvulso || v.alunoNome || v.compradorNome}</strong>
+                                <span className="block text-[11px] text-zinc-500">
+                                  Sessão: {v.dataSessao?.split('-').reverse().join('/') || 'Única'} •{' '}
+                                  {v.qtdInteira ?? 1} Inteira(s), {v.qtdMeia ?? 0} Meia(s)
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <strong className="text-zinc-900 block">
+                                  R$ {Number(v.valor || 0).toFixed(2)}
+                                </strong>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                    v.status === 'pago'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-amber-100 text-amber-800'
+                                  }`}
+                                >
+                                  {v.status === 'pago' ? 'Pago' : 'Aguardando MP'}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* LISTA DE CHAMADA DOS BOLSISTAS */}
                 {chamadaAberta && (
                   <div className="p-3.5 rounded-xl bg-white border border-zinc-200 space-y-2">
                     <p className="text-xs font-bold uppercase text-[#4A041C]">
-                      Chamada dos Bolsistas no Evento ({ev.local})
+                      Chamada dos Bolsistas ({ev.local})
                     </p>
                     {bolsistasEscalados.length === 0 ? (
-                      <p className="text-xs text-zinc-500">
-                        Nenhum bolsista foi escalado neste evento.
-                      </p>
+                      <p className="text-xs text-zinc-500">Nenhum bolsista escalado.</p>
                     ) : (
                       <div className="divide-y divide-zinc-100">
                         {bolsistasEscalados.map((b) => {
+                          const dataIsoEv = ev.data?.includes('/')
+                            ? ev.data.split('/').reverse().join('-')
+                            : ev.data || '';
+                          const chaveAtiv = `${dataIsoEv}_evento_${ev.id}`;
                           const reg = presencasBolsistas.find(
                             (p) => p.atividadeChave === chaveAtiv && p.bolsistaId === b.id
                           );
                           return (
-                            <div key={b.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                              <div>
-                                <strong className="text-zinc-900">{b.nome}</strong>
-                                {reg && (
-                                  <span className="block text-[10px] text-zinc-500">
-                                    Status atual: <strong>{reg.status.toUpperCase()}</strong> ({reg.lancadoPorNome})
-                                  </span>
-                                )}
-                              </div>
+                            <div
+                              key={b.id}
+                              className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                            >
+                              <strong className="text-zinc-900">{b.nome}</strong>
                               <div className="flex gap-1.5">
                                 {[
                                   { id: 'presente', label: '✅ Presente', cor: 'bg-emerald-600 text-white' },
