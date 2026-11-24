@@ -24,6 +24,7 @@ import {
   CreditCard,
   AlertTriangle,
   LogOut,
+  Building2,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
@@ -112,7 +113,7 @@ function calcularProximoVencimento(diaVencimentoPadrao = 5) {
 
 export default function PainelAluno() {
   const { user, userData, logout } = useAuth();
-  const [abaAtiva, setAbaAtiva] = useState('turmas'); // 'turmas' | 'novidades' | 'fale_conosco'
+  const [abaAtiva, setAbaAtiva] = useState('turmas');
   const [carregando, setCarregando] = useState(true);
 
   const [minhasMatriculas, setMinhasMatriculas] = useState([]);
@@ -126,9 +127,10 @@ export default function PainelAluno() {
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
 
-  // Formulário Fale Conosco
+  // Formulário Fale Conosco (Coordenação ou Professor)
+  const [destinoTipo, setDestinoTipo] = useState('coordenacao'); // 'coordenacao' | 'professor'
   const [cursoMensagemId, setCursoMensagemId] = useState('');
-  const [assuntoMensagem, setAssuntoMensagem] = useState('Dúvida sobre a aula / passos');
+  const [assuntoMensagem, setAssuntoMensagem] = useState('Matrícula / Mensalidade / Secretaria');
   const [textoMensagem, setTextoMensagem] = useState('');
   const [enviandoMsg, setEnviandoMsg] = useState(false);
 
@@ -180,7 +182,6 @@ export default function PainelAluno() {
     carregarDadosAluno();
   }, [user?.uid]);
 
-  // Cruza matrículas com cursos e indicadores de mensalidade
   const turmasMatriculadas = useMemo(() => {
     const hojeIso = new Date().toISOString().split('T')[0];
 
@@ -198,7 +199,6 @@ export default function PainelAluno() {
         const pagasList = lancamentosTurma.filter((f) => f.status === 'pago');
         const pendentesList = lancamentosTurma.filter((f) => f.status === 'pendente');
 
-        // Verifica quantas pendentes estão vencidas ou a vencer nos próximos 7 dias
         const emAlerta = pendentesList.filter((p) => {
           if (!p.dataVencimento) return true;
           const diff = Math.ceil(
@@ -228,7 +228,6 @@ export default function PainelAluno() {
       .filter(Boolean);
   }, [minhasMatriculas, todosCursos, meuFinanceiro, userData, agora]);
 
-  // Resumo Financeiro Consolidado do Aluno
   const resumoMensalidades = useMemo(() => {
     const totalPagas = meuFinanceiro.filter(
       (f) => f.tipo === 'receita' && f.status === 'pago'
@@ -245,10 +244,9 @@ export default function PainelAluno() {
       if (!p.dataVencimento) return true;
       const venc = new Date(p.dataVencimento + 'T00:00:00');
       const diffDias = Math.ceil((venc.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
-      return diffDias <= 7; // Inclui vencidas e a vencer em até 7 dias
+      return diffDias <= 7;
     });
 
-    // Caso ainda não haja fatura pendente lançada manualmente, verifica se o dia de vencimento da turma está próximo (<= 7 dias)
     const turmasPagantesProximas = turmasMatriculadas.filter(
       (t) =>
         !t.isBolsistaNaTurma &&
@@ -338,27 +336,58 @@ export default function PainelAluno() {
     }
   };
 
-  // Grava na coleção 'mensagens' exatamente no formato lido pelo PainelProfessor.jsx
-  const handleEnviarMensagemProfessor = async (e) => {
+  const handleEnviarMensagem = async (e) => {
     e.preventDefault();
     if (!textoMensagem.trim()) return;
 
-    const turmaAlvo = turmasMatriculadas.find((t) => t.id === cursoMensagemId);
-    if (!turmaAlvo) {
-      alert('Selecione uma turma matriculada para enviar a mensagem.');
+    if (destinoTipo === 'professor') {
+      const turmaAlvo = turmasMatriculadas.find((t) => t.id === cursoMensagemId);
+      if (!turmaAlvo) {
+        alert('Selecione uma turma matriculada para enviar a mensagem ao professor.');
+        return;
+      }
+
+      setEnviandoMsg(true);
+      try {
+        await addDoc(collection(db, 'mensagens'), {
+          remetenteId: user.uid,
+          remetenteNome: userData?.nome || user.email,
+          remetenteTelefone: userData?.telefone || '',
+          destinoTipo: 'professor',
+          destinatarioId: turmaAlvo.profId || '',
+          destinatarioNome: turmaAlvo.professoresNomes || 'Professor(a)',
+          cursoId: turmaAlvo.id,
+          cursoTitulo: turmaAlvo.titulo,
+          assunto: assuntoMensagem,
+          texto: `[${assuntoMensagem}] ${textoMensagem.trim()}`,
+          lida: false,
+          resposta: '',
+          dataEnvio: new Date().toISOString(),
+        });
+
+        setTextoMensagem('');
+        alert(`✅ Mensagem enviada para ${turmaAlvo.professoresNomes || 'o(a) professor(a)'}!`);
+        carregarDadosAluno();
+      } catch (err) {
+        alert('Erro ao enviar mensagem: ' + err.message);
+      } finally {
+        setEnviandoMsg(false);
+      }
       return;
     }
 
+    // Envio direto para a Coordenação Geral / Secretaria
     setEnviandoMsg(true);
     try {
       await addDoc(collection(db, 'mensagens'), {
         remetenteId: user.uid,
         remetenteNome: userData?.nome || user.email,
         remetenteTelefone: userData?.telefone || '',
-        destinatarioId: turmaAlvo.profId || '',
-        destinatarioNome: turmaAlvo.professoresNomes || 'Professor(a)',
-        cursoId: turmaAlvo.id,
-        cursoTitulo: turmaAlvo.titulo,
+        destinoTipo: 'coordenacao',
+        destinatarioId: 'coordenacao',
+        destinatarioNome: 'Coordenação Geral',
+        cursoId: '',
+        cursoTitulo: 'Atendimento / Secretaria',
         assunto: assuntoMensagem,
         texto: `[${assuntoMensagem}] ${textoMensagem.trim()}`,
         lida: false,
@@ -367,9 +396,7 @@ export default function PainelAluno() {
       });
 
       setTextoMensagem('');
-      alert(
-        `✅ Mensagem enviada com sucesso para ${turmaAlvo.professoresNomes || 'o(a) professor(a)'}!`
-      );
+      alert('✅ Mensagem enviada diretamente para a Coordenação Geral!');
       carregarDadosAluno();
     } catch (err) {
       alert('Erro ao enviar mensagem: ' + err.message);
@@ -380,7 +407,6 @@ export default function PainelAluno() {
 
   return (
     <div className="min-h-screen bg-[#F4F4F6] text-zinc-900 pb-12">
-      {/* BARRA SUPERIOR DO ALUNO */}
       <header className="bg-white border-b border-zinc-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -416,7 +442,6 @@ export default function PainelAluno() {
           </div>
         ) : (
           <>
-            {/* BANNER DE BOAS-VINDAS + INDICADORES DE MENSALIDADE */}
             <div className="bg-gradient-to-r from-[#4A041C] to-[#D81B60] rounded-3xl p-6 sm:p-8 text-white shadow-lg space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -427,7 +452,7 @@ export default function PainelAluno() {
                     Olá, {userData?.nome?.split(' ')[0] || 'Dançarino(a)'}!
                   </h2>
                   <p className="text-xs sm:text-sm text-pink-100 mt-1">
-                    Acompanhe seus dias de aula, mensalidades, novidades e fale com seus professores.
+                    Acompanhe seus dias de aula, mensalidades, novidades e fale com a coordenação ou professores.
                   </p>
                 </div>
 
@@ -443,7 +468,6 @@ export default function PainelAluno() {
                 )}
               </div>
 
-              {/* CARDS RESUMO: MENSALIDADES PAGAS vs PERTO DE VENCER */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 <div className="bg-white/10 backdrop-blur-xs border border-white/20 rounded-2xl p-4 flex items-center justify-between">
                   <div>
@@ -471,7 +495,6 @@ export default function PainelAluno() {
               </div>
             </div>
 
-            {/* ALERTA DE MENSALIDADES PRÓXIMAS DO VENCIMENTO */}
             {resumoMensalidades.listaAlertas.length > 0 && (
               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 space-y-2">
                 <div className="flex items-center gap-2 text-xs font-bold uppercase text-amber-950">
@@ -499,7 +522,6 @@ export default function PainelAluno() {
               </div>
             )}
 
-            {/* BANNER DE NOTIFICAÇÃO QUANDO A AULA JÁ VAI COMEÇAR */}
             {alertasAulaComecando.length > 0 && (
               <div className="space-y-2">
                 {alertasAulaComecando.map((alertaTurma) => (
@@ -531,7 +553,6 @@ export default function PainelAluno() {
               </div>
             )}
 
-            {/* NAVEGAÇÃO EM 3 ABAS */}
             <div className="flex flex-wrap gap-2 bg-white p-2 rounded-2xl border border-zinc-200 shadow-sm">
               <button
                 type="button"
@@ -573,9 +594,6 @@ export default function PainelAluno() {
               </button>
             </div>
 
-            {/* ================================================================= */}
-            {/* ABA 1: MINHAS TURMAS MATRICULADAS & DIAS DE AULA                  */}
-            {/* ================================================================= */}
             {abaAtiva === 'turmas' && (
               <div className="space-y-4">
                 {turmasMatriculadas.length === 0 ? (
@@ -638,7 +656,6 @@ export default function PainelAluno() {
                               </p>
                             </div>
 
-                            {/* STATUS DA MENSALIDADE NA TURMA */}
                             {!turma.isBolsistaNaTurma && Number(turma.valor || 0) > 0 && (
                               <div className="p-3 rounded-xl bg-pink-50/60 border border-pink-200 text-xs flex items-center justify-between">
                                 <div>
@@ -674,7 +691,9 @@ export default function PainelAluno() {
                           <button
                             type="button"
                             onClick={() => {
+                              setDestinoTipo('professor');
                               setCursoMensagemId(turma.id);
+                              setAssuntoMensagem('Dúvida sobre a aula / passos');
                               setAbaAtiva('fale_conosco');
                             }}
                             className="w-full flex items-center justify-center gap-2 rounded-xl border border-zinc-300 py-2.5 text-xs font-bold uppercase text-zinc-700 hover:bg-[#4A041C] hover:text-white transition"
@@ -690,9 +709,6 @@ export default function PainelAluno() {
               </div>
             )}
 
-            {/* ================================================================= */}
-            {/* ABA 2: ANÚNCIOS DE NOVAS ATIVIDADES & INSCRIÇÃO                   */}
-            {/* ================================================================= */}
             {abaAtiva === 'novidades' && (
               <div className="space-y-4">
                 <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm">
@@ -788,7 +804,7 @@ export default function PainelAluno() {
             )}
 
             {/* ================================================================= */}
-            {/* ABA 3: FALE CONOSCO (MENSAGEM DIRETA PARA O PROFESSOR DA TURMA)   */}
+            {/* ABA 3: FALE CONOSCO (COORDENAÇÃO GERAL OU PROFESSOR DA TURMA)     */}
             {/* ================================================================= */}
             {abaAtiva === 'fale_conosco' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -796,32 +812,73 @@ export default function PainelAluno() {
                   <div className="flex items-center gap-2 text-[#4A041C]">
                     <MessageSquare size={20} className="text-[#D81B60]" />
                     <h3 className="text-lg font-bold uppercase font-condensed">
-                      Fale com o Professor da Sua Turma
+                      Enviar Mensagem
                     </h3>
                   </div>
 
-                  {turmasMatriculadas.length === 0 ? (
-                    <p className="text-xs text-zinc-500">
-                      Você precisa estar matriculado em uma turma para enviar mensagens diretas ao professor responsável.
-                    </p>
+                  {/* SELETOR DE DESTINO: COORDENAÇÃO vs PROFESSOR */}
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
+                      Para quem deseja enviar?
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDestinoTipo('coordenacao');
+                          setAssuntoMensagem('Matrícula / Mensalidade / Secretaria');
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold uppercase border transition ${
+                          destinoTipo === 'coordenacao'
+                            ? 'bg-[#4A041C] text-white border-[#4A041C]'
+                            : 'bg-zinc-50 text-zinc-700 border-zinc-300 hover:bg-zinc-100'
+                        }`}
+                      >
+                        <Building2 size={14} /> Coordenação Geral
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDestinoTipo('professor');
+                          setAssuntoMensagem('Dúvida sobre a aula / passos');
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold uppercase border transition ${
+                          destinoTipo === 'professor'
+                            ? 'bg-[#D81B60] text-white border-[#D81B60]'
+                            : 'bg-zinc-50 text-zinc-700 border-zinc-300 hover:bg-zinc-100'
+                        }`}
+                      >
+                        <UserCheck size={14} /> Professor da Turma
+                      </button>
+                    </div>
+                  </div>
+
+                  {destinoTipo === 'professor' && turmasMatriculadas.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                      Você ainda não possui turma vinculada para falar com um professor específico. Use a opção{' '}
+                      <strong>Coordenação Geral</strong> acima para tirar dúvidas ou pedir sua inclusão na turma!
+                    </div>
                   ) : (
-                    <form onSubmit={handleEnviarMensagemProfessor} className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                          Selecione sua Turma
-                        </label>
-                        <select
-                          value={cursoMensagemId}
-                          onChange={(e) => setCursoMensagemId(e.target.value)}
-                          className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
-                        >
-                          {turmasMatriculadas.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.titulo} — Prof. {t.professoresNomes}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    <form onSubmit={handleEnviarMensagem} className="space-y-3">
+                      {destinoTipo === 'professor' && (
+                        <div>
+                          <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                            Selecione sua Turma
+                          </label>
+                          <select
+                            value={cursoMensagemId}
+                            onChange={(e) => setCursoMensagemId(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
+                          >
+                            {turmasMatriculadas.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.titulo} — Prof. {t.professoresNomes}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
 
                       <div>
                         <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
@@ -832,21 +889,50 @@ export default function PainelAluno() {
                           onChange={(e) => setAssuntoMensagem(e.target.value)}
                           className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
                         >
-                          <option value="Dúvida sobre a aula / passos">Dúvida sobre a aula / passos</option>
-                          <option value="Aviso de ausência / atraso">Aviso de ausência / atraso</option>
-                          <option value="Ensaios / Coreografia">Ensaios / Coreografia</option>
-                          <option value="Outro assunto">Outro assunto</option>
+                          {destinoTipo === 'coordenacao' ? (
+                            <>
+                              <option value="Matrícula / Mensalidade / Secretaria">
+                                Matrícula / Mensalidade / Secretaria
+                              </option>
+                              <option value="Comprovante de Pagamento">
+                                Comprovante de Pagamento
+                              </option>
+                              <option value="Troca de Turma / Horário">
+                                Troca de Turma / Horário
+                              </option>
+                              <option value="Sugestão / Elogio / Outro">
+                                Sugestão / Elogio / Outro
+                              </option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="Dúvida sobre a aula / passos">
+                                Dúvida sobre a aula / passos
+                              </option>
+                              <option value="Aviso de ausência / atraso">
+                                Aviso de ausência / atraso
+                              </option>
+                              <option value="Ensaios / Coreografia">
+                                Ensaios / Coreografia
+                              </option>
+                              <option value="Outro assunto">Outro assunto</option>
+                            </>
+                          )}
                         </select>
                       </div>
 
                       <div>
                         <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                          Mensagem para o Professor
+                          Mensagem
                         </label>
                         <textarea
                           rows="4"
                           required
-                          placeholder="Escreva sua dúvida ou recado aqui..."
+                          placeholder={
+                            destinoTipo === 'coordenacao'
+                              ? 'Escreva sua mensagem para a secretaria/coordenação do estúdio...'
+                              : 'Escreva sua dúvida ou recado para o professor...'
+                          }
                           value={textoMensagem}
                           onChange={(e) => setTextoMensagem(e.target.value)}
                           className="w-full rounded-xl border border-zinc-300 p-3 text-sm text-zinc-900"
@@ -859,7 +945,11 @@ export default function PainelAluno() {
                         className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] py-3 text-xs font-bold uppercase tracking-wider text-white transition shadow"
                       >
                         <Send size={15} />
-                        {enviandoMsg ? 'Enviando...' : 'Enviar Mensagem ao Professor'}
+                        {enviandoMsg
+                          ? 'Enviando...'
+                          : destinoTipo === 'coordenacao'
+                          ? 'Enviar para Coordenação Geral'
+                          : 'Enviar Mensagem ao Professor'}
                       </button>
                     </form>
                   )}
@@ -873,7 +963,7 @@ export default function PainelAluno() {
 
                   {minhasMensagens.length === 0 ? (
                     <p className="text-xs text-zinc-400 py-8 text-center">
-                      Você ainda não enviou nenhuma mensagem aos professores.
+                      Você ainda não enviou nenhuma mensagem.
                     </p>
                   ) : (
                     <div className="space-y-3 max-h-[460px] overflow-y-auto">
@@ -883,7 +973,9 @@ export default function PainelAluno() {
                           className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2 text-xs"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-[#4A041C]">{msg.cursoTitulo}</span>
+                            <span className="font-bold text-[#4A041C]">
+                              {msg.cursoTitulo || 'Atendimento'}
+                            </span>
                             <span className="text-[10px] text-zinc-400">
                               {msg.dataEnvio
                                 ? new Date(msg.dataEnvio).toLocaleDateString('pt-BR')
@@ -891,7 +983,7 @@ export default function PainelAluno() {
                             </span>
                           </div>
                           <p className="text-[11px] font-semibold text-[#D81B60]">
-                            Para: Prof. {msg.destinatarioNome}
+                            Para: {msg.destinatarioNome}
                           </p>
                           <p className="text-zinc-800 bg-white p-2.5 rounded-lg border border-zinc-200">
                             {msg.texto}
@@ -899,7 +991,7 @@ export default function PainelAluno() {
                           {msg.resposta && (
                             <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-950">
                               <strong className="block text-[10px] uppercase text-emerald-800">
-                                Resposta de {msg.respondidoPor || 'Professor(a)'}:
+                                Resposta de {msg.respondidoPor || msg.destinatarioNome}:
                               </strong>
                               {msg.resposta}
                             </div>
