@@ -42,6 +42,26 @@ const ROTULOS_MODALIDADE = {
   },
 };
 
+function aplicarMascaraCpf(valor) {
+  const nums = (valor || '').replace(/\D/g, '').slice(0, 11);
+  return nums
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+}
+
+function aplicarMascaraTelefone(valor) {
+  const nums = (valor || '').replace(/\D/g, '').slice(0, 11);
+  if (nums.length <= 10) {
+    return nums
+      .replace(/(\d{2})(\d)/, '($1) $2')
+      .replace(/(\d{4})(\d)/, '$1-$2');
+  }
+  return nums
+    .replace(/(\d{2})(\d)/, '($1) $2')
+    .replace(/(\d{5})(\d)/, '$1-$2');
+}
+
 function calcularIdade(dataNasc) {
   if (!dataNasc) return null;
   const hoje = new Date();
@@ -77,7 +97,7 @@ export default function CadastroUnicoPublico() {
   const { token } = useParams();
   const navigate = useNavigate();
 
-  const [statusConvite, setStatusConvite] = useState('carregando'); // carregando | valido | expirado | invalido | concluido
+  const [statusConvite, setStatusConvite] = useState('carregando');
   const [convite, setConvite] = useState(null);
 
   // Campos do formulário
@@ -165,7 +185,6 @@ export default function CadastroUnicoPublico() {
 
     setEnviando(true);
     try {
-      // Revalida no Firestore antes de criar conta para evitar uso duplo simultâneo
       const checkSnap = await getDoc(doc(db, 'convites_cadastro', token));
       if (!checkSnap.exists() || checkSnap.data().usado || checkSnap.data().status !== 'ativo') {
         setStatusConvite('expirado');
@@ -223,7 +242,6 @@ export default function CadastroUnicoPublico() {
         criadoEm: new Date().toISOString(),
       });
 
-      // Expira imediatamente o link de uso único
       await updateDoc(doc(db, 'convites_cadastro', token), {
         usado: true,
         status: 'expirado',
@@ -358,7 +376,11 @@ export default function CadastroUnicoPublico() {
               </div>
             )}
 
-            <form onSubmit={handleConcluirCadastro} className="space-y-4">
+            <form onSubmit={handleConcluirCadastro} autoComplete="off" className="space-y-4">
+              {/* Campos ocultos para impedir autopreenchimento do Chrome */}
+              <input type="text" name="fake_user_trap" style={{ display: 'none' }} tabIndex={-1} />
+              <input type="password" name="fake_pass_trap" style={{ display: 'none' }} tabIndex={-1} />
+
               {isAlunoOuBolsista && (
                 <div>
                   <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
@@ -393,6 +415,8 @@ export default function CadastroUnicoPublico() {
                   </label>
                   <input
                     type="text"
+                    name="convite_nome_completo"
+                    autoComplete="off"
                     required
                     placeholder="Seu nome completo"
                     value={nome}
@@ -407,11 +431,14 @@ export default function CadastroUnicoPublico() {
                   </label>
                   <input
                     type="text"
+                    name="convite_cpf"
+                    autoComplete="off"
                     required
+                    maxLength={14}
                     placeholder="000.000.000-00"
                     value={cpf}
-                    onChange={(e) => setCpf(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                    onChange={(e) => setCpf(aplicarMascaraCpf(e.target.value))}
+                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-mono"
                   />
                 </div>
               </div>
@@ -485,9 +512,10 @@ export default function CadastroUnicoPublico() {
                       <input
                         type="text"
                         required
+                        maxLength={15}
                         value={telefone}
-                        onChange={(e) => setTelefone(e.target.value)}
-                        placeholder="(68) 99999-9999"
+                        onChange={(e) => setTelefone(aplicarMascaraTelefone(e.target.value))}
+                        placeholder="(00) 00000-0000"
                         className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
                       />
                     </div>
@@ -497,6 +525,10 @@ export default function CadastroUnicoPublico() {
                       </label>
                       <input
                         type="email"
+                        name="convite_resp_email"
+                        autoComplete="new-password"
+                        readOnly
+                        onFocus={(e) => e.target.removeAttribute('readOnly')}
                         required
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
@@ -513,9 +545,12 @@ export default function CadastroUnicoPublico() {
                       </label>
                       <input
                         type="text"
+                        maxLength={15}
                         value={telefoneSecundarioAluno}
-                        onChange={(e) => setTelefoneSecundarioAluno(e.target.value)}
-                        placeholder="(68) 99999-9999"
+                        onChange={(e) =>
+                          setTelefoneSecundarioAluno(aplicarMascaraTelefone(e.target.value))
+                        }
+                        placeholder="(00) 00000-0000"
                         className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
                       />
                     </div>
@@ -525,6 +560,7 @@ export default function CadastroUnicoPublico() {
                       </label>
                       <input
                         type="email"
+                        autoComplete="off"
                         value={emailSecundarioAluno}
                         onChange={(e) => setEmailSecundarioAluno(e.target.value)}
                         placeholder="aluno@email.com"
@@ -541,10 +577,13 @@ export default function CadastroUnicoPublico() {
                     </label>
                     <input
                       type="text"
+                      name="convite_whatsapp"
+                      autoComplete="off"
                       required
-                      placeholder="(68) 99999-9999"
+                      maxLength={15}
+                      placeholder="(00) 00000-0000"
                       value={telefone}
-                      onChange={(e) => setTelefone(e.target.value)}
+                      onChange={(e) => setTelefone(aplicarMascaraTelefone(e.target.value))}
                       className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
                     />
                   </div>
@@ -555,6 +594,10 @@ export default function CadastroUnicoPublico() {
                     </label>
                     <input
                       type="email"
+                      name="convite_email_acesso"
+                      autoComplete="new-password"
+                      readOnly
+                      onFocus={(e) => e.target.removeAttribute('readOnly')}
                       required
                       placeholder="seuemail@exemplo.com"
                       value={email}
@@ -604,6 +647,10 @@ export default function CadastroUnicoPublico() {
                   <div className="relative">
                     <input
                       type={mostrarSenha ? 'text' : 'password'}
+                      name="convite_senha_nova"
+                      autoComplete="new-password"
+                      readOnly
+                      onFocus={(e) => e.target.removeAttribute('readOnly')}
                       required
                       minLength={6}
                       placeholder="Mínimo 6 caracteres"
@@ -627,6 +674,10 @@ export default function CadastroUnicoPublico() {
                   </label>
                   <input
                     type={mostrarSenha ? 'text' : 'password'}
+                    name="convite_senha_confirma"
+                    autoComplete="new-password"
+                    readOnly
+                    onFocus={(e) => e.target.removeAttribute('readOnly')}
                     required
                     minLength={6}
                     placeholder="Repita a senha"
