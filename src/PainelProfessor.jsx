@@ -72,16 +72,26 @@ export default function PainelProfessor() {
     try {
       const [cursosSnap, msgsSnap] = await Promise.all([
         getDocs(collection(db, 'cursos')),
-        getDocs(query(collection(db, 'mensagens'), where('destinatarioId', '==', user.uid))),
+        getDocs(collection(db, 'mensagens')),
       ]);
 
       const todosCursos = cursosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const minhasTurmas = todosCursos.filter(
         (c) => c.profId === user.uid || !c.profId
       );
+      const idsMinhasTurmas = new Set(minhasTurmas.map((t) => t.id));
+
+      const todasMsgs = msgsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const minhasMsgs = todasMsgs
+        .filter(
+          (m) =>
+            m.destinatarioId === user.uid ||
+            (m.cursoId && idsMinhasTurmas.has(m.cursoId))
+        )
+        .sort((a, b) => (b.dataEnvio || '').localeCompare(a.dataEnvio || ''));
 
       setCursos(minhasTurmas);
-      setMensagens(msgsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setMensagens(minhasMsgs);
 
       if (temAutorizacaoBolsistas) {
         await carregarModuloBolsistas();
