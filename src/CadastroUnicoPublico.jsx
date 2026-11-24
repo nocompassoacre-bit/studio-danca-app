@@ -34,6 +34,12 @@ const ROTULOS_MODALIDADE = {
     rotaDestino: '/bolsista',
     corBadge: 'bg-cyan-700 text-white',
   },
+  admin: {
+    titulo: 'Cadastro de Admin / Coordenação',
+    badge: 'Modalidade: Admin / Coordenação',
+    rotaDestino: '/admin',
+    corBadge: 'bg-amber-600 text-white',
+  },
 };
 
 function calcularIdade(dataNasc) {
