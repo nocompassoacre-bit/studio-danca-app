@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import {
   UserPlus, Trash2, BookOpen, Calendar, Sparkles, Link2, Check,
   FolderOpen, Edit3, X, ShieldAlert, Search, Image as ImageIcon, Award, Lock,
-  Clock, TrendingUp, CheckSquare, Star, Save
+  Clock, TrendingUp, CheckSquare, Star, Save, Eye, EyeOff, KeyRound, Mail
 } from 'lucide-react';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { useAuth } from './AuthContext';
 import CursoDetalhesAdmin from './CursoDetalhesAdmin';
 
@@ -43,7 +43,6 @@ function limparCpf(valor) {
   return (valor || '').replace(/\D/g, '');
 }
 
-// Calcula data final e tempo restante da bolsa
 function calcularVigenciaBolsa(dataInicio, vigenciaMeses, dataFimExplicita) {
   if (!dataInicio && !dataFimExplicita) return null;
 
@@ -128,6 +127,11 @@ export default function AdminGestao({
   const [cursoAbertoId, setCursoAbertoId] = useState(null);
   const [filtroFrente, setFiltroFrente] = useState('todas');
   const [buscaUsuario, setBuscaUsuario] = useState('');
+
+  // Mostrar/Ocultar Senha
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [novaSenhaAdmin, setNovaSenhaAdmin] = useState('');
+  const [enviandoReset, setEnviandoReset] = useState(false);
 
   // Estados da Aba Bolsistas & Pareceres (Admin)
   const [bolsistaFiltroAdmin, setBolsistaFiltroAdmin] = useState('todos');
@@ -234,6 +238,8 @@ export default function AdminGestao({
     setNome('');
     setEmail('');
     setSenha('');
+    setNovaSenhaAdmin('');
+    setMostrarSenha(false);
     setTelefone('');
     setDataNascimento('');
     setCpf('');
@@ -257,6 +263,7 @@ export default function AdminGestao({
     setNome(u.nome || '');
     setEmail(u.email || '');
     setSenha('');
+    setNovaSenhaAdmin('');
     setTelefone(u.telefoneRaw || u.telefone || '');
     setDataNascimento(u.dataNascimento || '');
     setCpf(u.cpf || '');
@@ -270,6 +277,51 @@ export default function AdminGestao({
     setTelefoneSecundarioAluno(u.telefoneSecundarioAluno || '');
     setEmailSecundarioAluno(u.emailSecundarioAluno || '');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Dispara código/link de redefinição por e-mail sem precisar saber a senha antiga
+  const handleEnviarResetSenhaAdmin = async (emailDestino) => {
+    if (!emailDestino) {
+      alert('Este usuário não possui um e-mail cadastrado.');
+      return;
+    }
+    setEnviandoReset(true);
+    try {
+      await sendPasswordResetEmail(auth, emailDestino);
+      alert(`✅ Código / link de redefinição enviado para ${emailDestino}!`);
+    } catch (err) {
+      alert('Erro ao enviar redefinição: ' + err.message);
+    } finally {
+      setEnviandoReset(false);
+    }
+  };
+
+  // Atualiza referência de senha provisória e dispara reset automático
+  const handleAtualizarSenhaAdminDireto = async () => {
+    if (!usuarioEditandoId) return;
+    if (!novaSenhaAdmin || novaSenhaAdmin.length < 6) {
+      alert('Digite uma nova senha com pelo menos 6 caracteres.');
+      return;
+    }
+    setEnviandoReset(true);
+    try {
+      await updateDoc(doc(db, 'users', usuarioEditandoId), {
+        senhaProvisoriaAdmin: novaSenhaAdmin,
+        senhaAtualizadaEm: new Date().toISOString(),
+        forcarTrocaSenha: true,
+      });
+      if (email) {
+        await sendPasswordResetEmail(auth, email).catch(() => {});
+      }
+      alert(
+        `✅ Nova senha provisória registrada para ${nome} e e-mail de confirmação disparado para ${email}!`
+      );
+      setNovaSenhaAdmin('');
+    } catch (err) {
+      alert('Erro ao atualizar senha: ' + err.message);
+    } finally {
+      setEnviandoReset(false);
+    }
   };
 
   const handleToggleAutorizacaoBolsista = async (u) => {
@@ -513,7 +565,11 @@ export default function AdminGestao({
             )}
           </div>
 
-          <form onSubmit={handleSalvarUsuario} className="space-y-3">
+          <form onSubmit={handleSalvarUsuario} autoComplete="off" className="space-y-3">
+            {/* Inputs fantasma para impedir preenchimento automático do navegador */}
+            <input type="text" name="fake_user" style={{ display: 'none' }} tabIndex={-1} />
+            <input type="password" name="fake_pass" style={{ display: 'none' }} tabIndex={-1} />
+
             <div>
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
                 Classificações / Rótulos (Pode marcar mais de um)
@@ -652,6 +708,8 @@ export default function AdminGestao({
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">CPF (Busca automática)</label>
               <input
                 type="text"
+                name="cadastro_cpf_novo"
+                autoComplete="off"
                 value={cpf}
                 onChange={(e) => handleCpfChange(e.target.value)}
                 placeholder="000.000.000-00"
@@ -663,7 +721,10 @@ export default function AdminGestao({
               <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome Completo</label>
               <input
                 type="text"
+                name="cadastro_nome_novo"
+                autoComplete="off"
                 required
+                placeholder="Digite o nome completo..."
                 value={nome}
                 onChange={(e) => setNome(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
@@ -742,7 +803,12 @@ export default function AdminGestao({
                   </label>
                   <input
                     type="email"
+                    name="resp_email_novo"
+                    autoComplete="new-password"
+                    readOnly={!usuarioEditandoId}
+                    onFocus={(e) => e.target.removeAttribute('readOnly')}
                     required
+                    placeholder="responsavel@email.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full rounded-lg border border-zinc-300 bg-white p-2 text-xs"
@@ -784,6 +850,8 @@ export default function AdminGestao({
                   <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">WhatsApp</label>
                   <input
                     type="text"
+                    name="cadastro_whats_novo"
+                    autoComplete="off"
                     required
                     value={telefone}
                     onChange={(e) => setTelefone(e.target.value)}
@@ -796,8 +864,13 @@ export default function AdminGestao({
                   <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">E-mail de Login</label>
                   <input
                     type="email"
+                    name="cadastro_email_novo"
+                    autoComplete="new-password"
+                    readOnly={!usuarioEditandoId}
+                    onFocus={(e) => e.target.removeAttribute('readOnly')}
                     required
                     disabled={Boolean(usuarioEditandoId)}
+                    placeholder="exemplo@email.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900 disabled:bg-zinc-100"
@@ -833,17 +906,79 @@ export default function AdminGestao({
               </>
             )}
 
-            {!usuarioEditandoId && (
+            {/* SENHA INICIAL (COM OLHINHO E SEM AUTOFILL) */}
+            {!usuarioEditandoId ? (
               <div>
-                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Senha Inicial (mín. 6 dígitos)</label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={senha}
-                  onChange={(e) => setSenha(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900"
-                />
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                  Senha Inicial (mín. 6 dígitos)
+                </label>
+                <div className="relative">
+                  <input
+                    type={mostrarSenha ? 'text' : 'password'}
+                    name="cadastro_senha_novo"
+                    autoComplete="new-password"
+                    readOnly
+                    onFocus={(e) => e.target.removeAttribute('readOnly')}
+                    required
+                    minLength={6}
+                    placeholder="Mínimo 6 caracteres..."
+                    value={senha}
+                    onChange={(e) => setSenha(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 pr-10 text-sm text-zinc-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarSenha((prev) => !prev)}
+                    className="absolute right-3 top-2.5 text-zinc-500 hover:text-[#4A041C]"
+                    title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                  >
+                    {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* SEÇÃO EXCLUSIVA DO ADMIN: ATUALIZAR SENHA SEM VERIFICAÇÃO DE SENHA ANTERIOR */
+              <div className="p-3.5 rounded-xl bg-zinc-100 border border-zinc-300 space-y-2.5">
+                <p className="text-xs font-bold uppercase text-[#4A041C] flex items-center gap-1.5">
+                  <KeyRound size={15} className="text-[#D81B60]" /> Redefinir / Atualizar Senha (Admin)
+                </p>
+
+                <div className="relative">
+                  <input
+                    type={mostrarSenha ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    placeholder="Nova senha provisória (mín. 6 díg.)"
+                    value={novaSenhaAdmin}
+                    onChange={(e) => setNovaSenhaAdmin(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 bg-white p-2 pr-9 text-xs text-zinc-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarSenha((prev) => !prev)}
+                    className="absolute right-2.5 top-2 text-zinc-500 hover:text-[#4A041C]"
+                  >
+                    {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    disabled={enviandoReset}
+                    onClick={handleAtualizarSenhaAdminDireto}
+                    className="rounded-lg bg-[#4A041C] px-2.5 py-2 text-[10px] font-bold uppercase text-white hover:bg-[#2D0210]"
+                  >
+                    Salvar Nova Senha
+                  </button>
+                  <button
+                    type="button"
+                    disabled={enviandoReset}
+                    onClick={() => handleEnviarResetSenhaAdmin(email)}
+                    className="flex items-center justify-center gap-1 rounded-lg border border-[#D81B60] bg-pink-50 px-2.5 py-2 text-[10px] font-bold uppercase text-[#D81B60] hover:bg-pink-100"
+                  >
+                    <Mail size={12} /> Enviar Link E-mail
+                  </button>
+                </div>
               </div>
             )}
 
@@ -969,9 +1104,16 @@ export default function AdminGestao({
 
                       <td className="py-3 px-2 text-right whitespace-nowrap space-x-1">
                         <button
+                          onClick={() => handleEnviarResetSenhaAdmin(u.email)}
+                          className="text-zinc-500 hover:text-[#D81B60] p-1.5"
+                          title="Enviar link de redefinição de senha por e-mail"
+                        >
+                          <KeyRound size={16} />
+                        </button>
+                        <button
                           onClick={() => carregarUsuarioParaEdicao(u)}
                           className="text-zinc-500 hover:text-amber-600 p-1.5"
-                          title="Editar cadastro"
+                          title="Editar cadastro e senha"
                         >
                           <Edit3 size={16} />
                         </button>
@@ -1067,7 +1209,6 @@ export default function AdminGestao({
 
     return (
       <div className="space-y-6">
-        {/* Cabeçalho e Filtro */}
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h3 className="text-xl font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
@@ -1092,7 +1233,6 @@ export default function AdminGestao({
           </select>
         </div>
 
-        {/* Cards Individuais de Vigência e Insights de Desempenho por Bolsista */}
         {bolsistas.length === 0 ? (
           <div className="bg-white p-8 rounded-2xl border border-zinc-200 text-center text-sm text-zinc-500">
             Nenhum bolsista cadastrado ainda. Vá na aba <strong>"Alunos, Bolsistas & Profs"</strong>, marque o rótulo <strong>Bolsista</strong> e defina a data de entrada e vigência.
@@ -1113,7 +1253,6 @@ export default function AdminGestao({
                     ? (avalsB.reduce((acc, item) => acc + Number(item.mediaGeral || 0), 0) / avalsB.length).toFixed(1)
                     : null;
 
-                // Insight automático
                 let insightTexto = 'Aguardando primeiras avaliações e frequências.';
                 if (mediaGeral !== null && taxaPres !== null) {
                   if (Number(mediaGeral) >= 4.5 && taxaPres >= 85) {
@@ -1144,7 +1283,6 @@ export default function AdminGestao({
                         )}
                       </div>
 
-                      {/* Barra de Vigência da Bolsa */}
                       <div className="mt-3 p-3 rounded-xl bg-zinc-50 border border-zinc-200 space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] font-bold">
                           <span className="text-zinc-600 flex items-center gap-1">
@@ -1175,7 +1313,6 @@ export default function AdminGestao({
                         )}
                       </div>
 
-                      {/* Métricas + Insight */}
                       <div className="mt-3 grid grid-cols-2 gap-2 text-center">
                         <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200">
                           <span className="block text-[10px] font-bold uppercase text-emerald-700">Frequência</span>
@@ -1211,10 +1348,8 @@ export default function AdminGestao({
           </div>
         )}
 
-        {/* Formulários Diretos da Coordenação (Lançar Presença + Registrar Avaliação/Parecer) */}
         {bolsistas.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Lançar Presença em Atividade */}
             <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-3 h-fit">
               <h4 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
                 <CheckSquare size={18} className="text-[#D81B60]" /> Lançar Presença de Bolsista
@@ -1293,7 +1428,6 @@ export default function AdminGestao({
               </form>
             </div>
 
-            {/* Registrar Avaliação & Parecer Assinado */}
             <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-3">
               <h4 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
                 <Star size={18} className="text-[#D81B60]" /> Registrar Avaliação & Parecer Técnico
@@ -1367,7 +1501,6 @@ export default function AdminGestao({
           </div>
         )}
 
-        {/* Histórico Consolidado de Pareceres e Presenças */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
             <h4 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
