@@ -146,14 +146,15 @@ export function GeradorLinkCadastroUnico() {
             Modalidade do Cadastro *
           </label>
           <select
-            value={modalidade}
-            onChange={(e) => setModalidade(e.target.value)}
-            className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-bold text-zinc-900"
-          >
-            <option value="aluno">Aluno(a)</option>
-            <option value="prof">Professor(a)</option>
-            <option value="bolsista">Bolsista</option>
-          </select>
+  value={modalidade}
+  onChange={(e) => setModalidade(e.target.value)}
+  className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-bold text-zinc-900"
+>
+  <option value="aluno">Aluno(a)</option>
+  <option value="prof">Professor(a)</option>
+  <option value="bolsista">Bolsista</option>
+  <option value="admin">Admin / Coordenação</option>
+</select>
         </div>
 
         <div className="md:col-span-5">
