@@ -1252,9 +1252,13 @@ export default function AdminGestao({
             </table>
           </div>
         </div>
+        </div>
       </div>
     );
   }
+
+  // =========================================================================
+  // ABA NOVA: BOLSISTAS, VIGÊNCIA, PRESENÇAS, INSIGHTS & PARECERES (ADMIN)
 
   // =========================================================================
   // ABA NOVA: BOLSISTAS, VIGÊNCIA, PRESENÇAS, INSIGHTS & PARECERES (ADMIN)
