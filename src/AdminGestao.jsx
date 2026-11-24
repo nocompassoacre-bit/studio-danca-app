@@ -661,8 +661,11 @@ export default function AdminGestao({
     });
 
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className={`p-6 rounded-2xl border shadow-sm h-fit transition ${
+      <div className="space-y-6">
+        <GeradorLinkCadastroUnico />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className={`p-6 rounded-2xl border shadow-sm h-fit transition ${
           usuarioEditandoId
             ? 'bg-amber-50/60 border-amber-400'
             : 'bg-white border-zinc-200'
