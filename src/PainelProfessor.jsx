@@ -5,13 +5,14 @@ import {
 import {
   BookOpen, Users, CheckSquare, FileText, MessageSquare,
   Calendar, Clock, Plus, Save, CheckCircle2, XCircle, Send, LogOut, ArrowLeft,
-  BarChart3, UserCheck, Edit3
+  BarChart3, UserCheck, Edit3, Award, Star, ShieldAlert, Lock
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
 
 export default function PainelProfessor() {
   const { user, userData, logout } = useAuth();
+  const [abaPrincipal, setAbaPrincipal] = useState('turmas'); // 'turmas' | 'bolsistas'
   const [cursos, setCursos] = useState([]);
   const [cursoSelecionado, setCursoSelecionado] = useState(null);
   const [subAba, setSubAba] = useState('chamada');
@@ -39,9 +40,34 @@ export default function PainelProfessor() {
   const [mensagens, setMensagens] = useState([]);
   const [respostaTexto, setRespostaTexto] = useState({});
 
-  const nomeProfessor = userData?.nome || user?.displayName || 'Professor(a)';
+  // =========================================================================
+  // ESTADOS DA ABA EXCLUSIVA DE BOLSISTAS (AUTORIZADA PELA COORDENAÇÃO)
+  // =========================================================================
+  const [bolsistasLista, setBolsistasLista] = useState([]);
+  const [bolsistaSelecionadoId, setBolsistaSelecionadoId] = useState('');
+  const [avaliacoesBolsistas, setAvaliacoesBolsistas] = useState([]);
+  const [atividadesBolsistas, setAtividadesBolsistas] = useState([]);
 
-  const carregarTurmasEMensagens = async () => {
+  // Formulário de lançamento de presença/atividade do bolsista
+  const [dataAtivBolsista, setDataAtivBolsista] = useState(new Date().toISOString().split('T')[0]);
+  const [tipoAtivBolsista, setTipoAtivBolsista] = useState('Apoio em Turma');
+  const [descricaoAtivBolsista, setDescricaoAtivBolsista] = useState('');
+  const [statusAtivBolsista, setStatusAtivBolsista] = useState('presente');
+
+  // Formulário de avaliação de desempenho + anotação restrita ao Admin
+  const [notaAssiduidade, setNotaAssiduidade] = useState(5);
+  const [notaParticipacao, setNotaParticipacao] = useState(5);
+  const [notaPontualidade, setNotaPontualidade] = useState(5);
+  const [notaPostura, setNotaPostura] = useState(5);
+  const [anotacaoAdmin, setAnotacaoAdmin] = useState('');
+  const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false);
+
+  const nomeProfessor = userData?.nome || user?.displayName || 'Professor(a)';
+  const papeisUsuario = Array.isArray(userData?.roles) ? userData.roles : [userData?.role];
+  const temAutorizacaoBolsistas =
+    Boolean(userData?.podeAvaliarBolsistas) || papeisUsuario.includes('admin');
+
+  const carregarDadosIniciais = async () => {
     setCarregando(true);
     try {
       const [cursosSnap, msgsSnap] = await Promise.all([
@@ -56,6 +82,10 @@ export default function PainelProfessor() {
 
       setCursos(minhasTurmas);
       setMensagens(msgsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      if (temAutorizacaoBolsistas) {
+        await carregarModuloBolsistas();
+      }
     } catch (err) {
       console.error('Erro ao carregar painel do professor:', err);
     } finally {
@@ -63,11 +93,37 @@ export default function PainelProfessor() {
     }
   };
 
+  const carregarModuloBolsistas = async () => {
+    try {
+      const [usersSnap, avalSnap, ativSnap] = await Promise.all([
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'avaliacoes_bolsistas')),
+        getDocs(collection(db, 'presencas_bolsistas')),
+      ]);
+
+      const todosUsuarios = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const apenasBolsistas = todosUsuarios.filter((u) => {
+        const roles = Array.isArray(u.roles) ? u.roles : [u.role];
+        return roles.includes('bolsista');
+      });
+
+      setBolsistasLista(apenasBolsistas);
+      if (apenasBolsistas.length > 0 && !bolsistaSelecionadoId) {
+        setBolsistaSelecionadoId(apenasBolsistas[0].id);
+      }
+
+      setAvaliacoesBolsistas(avalSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setAtividadesBolsistas(ativSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error('Erro ao carregar dados dos bolsistas:', err);
+    }
+  };
+
   useEffect(() => {
     if (user?.uid) {
-      carregarTurmasEMensagens();
+      carregarDadosIniciais();
     }
-  }, [user?.uid]);
+  }, [user?.uid, temAutorizacaoBolsistas]);
 
   const carregarHistoricoPresencas = async (cursoId) => {
     const presSnap = await getDocs(
@@ -110,7 +166,6 @@ export default function PainelProfessor() {
     }
   };
 
-  // Atualiza marcações ao trocar a data da chamada
   useEffect(() => {
     if (!cursoSelecionado) return;
     const mapa = {};
@@ -174,7 +229,7 @@ export default function PainelProfessor() {
     try {
       await updateDoc(doc(db, 'cursos', cursoSelecionado.id), { ementa });
       alert('Ementa atualizada com sucesso!');
-      carregarTurmasEMensagens();
+      carregarDadosIniciais();
     } catch (err) {
       alert('Erro ao salvar ementa: ' + err.message);
     } finally {
@@ -214,9 +269,72 @@ export default function PainelProfessor() {
         lida: true,
       });
       setRespostaTexto((prev) => ({ ...prev, [msgId]: '' }));
-      carregarTurmasEMensagens();
+      carregarDadosIniciais();
     } catch (err) {
       alert('Erro ao enviar resposta: ' + err.message);
+    }
+  };
+
+  // =========================================================================
+  // HANDLERS DA AVALIAÇÃO E PRESENÇA DE BOLSISTAS
+  // =========================================================================
+  const handleRegistrarAtividadeBolsista = async (e) => {
+    e.preventDefault();
+    const bolsistaObj = bolsistasLista.find((b) => b.id === bolsistaSelecionadoId);
+    if (!bolsistaObj) return;
+
+    try {
+      await addDoc(collection(db, 'presencas_bolsistas'), {
+        bolsistaId: bolsistaObj.id,
+        bolsistaNome: bolsistaObj.nome,
+        data: dataAtivBolsista,
+        tipoAtividade: tipoAtivBolsista,
+        descricao: descricaoAtivBolsista,
+        status: statusAtivBolsista,
+        lancadoPorId: user.uid,
+        lancadoPorNome: nomeProfessor,
+        criadoEm: new Date().toISOString(),
+      });
+      setDescricaoAtivBolsista('');
+      await carregarModuloBolsistas();
+      alert('Presença/atividade do bolsista registrada com sucesso!');
+    } catch (err) {
+      alert('Erro ao registrar presença do bolsista: ' + err.message);
+    }
+  };
+
+  const handleSalvarAvaliacaoBolsista = async (e) => {
+    e.preventDefault();
+    const bolsistaObj = bolsistasLista.find((b) => b.id === bolsistaSelecionadoId);
+    if (!bolsistaObj) return;
+
+    setSalvandoAvaliacao(true);
+    const mediaGeral = Number(
+      ((Number(notaAssiduidade) + Number(notaParticipacao) + Number(notaPontualidade) + Number(notaPostura)) / 4).toFixed(1)
+    );
+
+    try {
+      await addDoc(collection(db, 'avaliacoes_bolsistas'), {
+        bolsistaId: bolsistaObj.id,
+        bolsistaNome: bolsistaObj.nome,
+        assiduidade: Number(notaAssiduidade),
+        participacao: Number(notaParticipacao),
+        pontualidade: Number(notaPontualidade),
+        postura: Number(notaPostura),
+        mediaGeral,
+        anotacaoRestritaAdmin: anotacaoAdmin.trim(),
+        visivelApenasAdmin: true,
+        avaliadorId: user.uid,
+        avaliadorNome: nomeProfessor,
+        dataAvaliacao: new Date().toISOString(),
+      });
+      setAnotacaoAdmin('');
+      await carregarModuloBolsistas();
+      alert('Avaliação de desempenho registrada! A anotação foi gravada com sua assinatura para a Coordenação.');
+    } catch (err) {
+      alert('Erro ao salvar avaliação: ' + err.message);
+    } finally {
+      setSalvandoAvaliacao(false);
     }
   };
 
@@ -253,6 +371,28 @@ export default function PainelProfessor() {
   const alunoSelecionadoDetalhes =
     resumoPorAluno.find((a) => a.alunoId === alunoFiltroId) || resumoPorAluno[0] || null;
 
+  const bolsistaAtivo = bolsistasLista.find((b) => b.id === bolsistaSelecionadoId) || null;
+  const atividadesDoBolsista = atividadesBolsistas
+    .filter((a) => a.bolsistaId === bolsistaSelecionadoId)
+    .sort((a, b) => b.data.localeCompare(a.data));
+  const avaliacoesDoBolsista = avaliacoesBolsistas
+    .filter((av) => av.bolsistaId === bolsistaSelecionadoId)
+    .sort((a, b) => (b.dataAvaliacao || '').localeCompare(a.dataAvaliacao || ''));
+
+  const mediaAcumuladaBolsista =
+    avaliacoesDoBolsista.length > 0
+      ? (
+          avaliacoesDoBolsista.reduce((acc, item) => acc + Number(item.mediaGeral || 0), 0) /
+          avaliacoesDoBolsista.length
+        ).toFixed(1)
+      : '—';
+
+  const presencasBolsistaCount = atividadesDoBolsista.filter((a) => a.status === 'presente').length;
+  const taxaPresencaBolsista =
+    atividadesDoBolsista.length > 0
+      ? Math.round((presencasBolsistaCount / atividadesDoBolsista.length) * 100)
+      : 0;
+
   const naoLidas = mensagens.filter((m) => !m.lida).length;
 
   return (
@@ -287,7 +427,320 @@ export default function PainelProfessor() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        {!cursoSelecionado ? (
+        {/* Navegação Principal (Minhas Turmas vs Avaliação de Bolsistas se autorizado) */}
+        {!cursoSelecionado && (
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setAbaPrincipal('turmas')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold uppercase transition ${
+                abaPrincipal === 'turmas'
+                  ? 'bg-[#4A041C] text-white shadow-sm'
+                  : 'bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-100'
+              }`}
+            >
+              <BookOpen size={16} /> Minhas Turmas & Diário
+            </button>
+
+            {temAutorizacaoBolsistas && (
+              <button
+                onClick={() => setAbaPrincipal('bolsistas')}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold uppercase transition ${
+                  abaPrincipal === 'bolsistas'
+                    ? 'bg-gradient-to-r from-[#4A041C] to-[#D81B60] text-white shadow-sm'
+                    : 'bg-white text-[#4A041C] border border-[#D81B60]/40 hover:bg-pink-50'
+                }`}
+              >
+                <Award size={16} /> Avaliação & Frequência de Bolsistas
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* ABA EXCLUSIVA: GESTÃO E AVALIAÇÃO DE BOLSISTAS (PERFIL AUTORIZADO)    */}
+        {/* ===================================================================== */}
+        {abaPrincipal === 'bolsistas' && temAutorizacaoBolsistas && !cursoSelecionado && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-r from-[#2D0210] via-[#4A041C] to-[#880E4F] rounded-2xl p-6 text-white shadow-md">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/15 text-[#E5C17B] text-[10px] font-bold uppercase tracking-wider mb-2">
+                <ShieldAlert size={12} /> Acesso Autorizado pela Coordenação
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-bold uppercase font-condensed">
+                Acompanhamento & Avaliação de Bolsistas
+              </h2>
+              <p className="text-xs sm:text-sm text-pink-100 mt-1">
+                Lance presenças nas atividades do estúdio, avalie desempenho e registre pareceres técnicos assinados (visíveis apenas para a Coordenação Geral).
+              </p>
+            </div>
+
+            {bolsistasLista.length === 0 ? (
+              <div className="bg-white p-8 rounded-2xl border border-zinc-200 text-center text-sm text-zinc-500">
+                Nenhum usuário com perfil de Bolsista cadastrado no sistema ainda.
+              </div>
+            ) : (
+              <>
+                {/* Seletor de Bolsista + Resumo de Desempenho */}
+                <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
+                  <div className="lg:col-span-5">
+                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
+                      Selecione o(a) Bolsista
+                    </label>
+                    <select
+                      value={bolsistaSelecionadoId}
+                      onChange={(e) => setBolsistaSelecionadoId(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-300 p-3 text-sm font-bold text-[#4A041C]"
+                    >
+                      {bolsistasLista.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="lg:col-span-7 grid grid-cols-3 gap-3">
+                    <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200">
+                      <span className="block text-[10px] font-bold uppercase text-zinc-500">Frequência Atividades</span>
+                      <span className="text-2xl font-bold font-condensed text-emerald-700">
+                        {taxaPresencaBolsista}%
+                      </span>
+                    </div>
+                    <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200">
+                      <span className="block text-[10px] font-bold uppercase text-zinc-500">Média Geral (1 a 5)</span>
+                      <span className="text-2xl font-bold font-condensed text-[#D81B60]">
+                        {mediaAcumuladaBolsista} ★
+                      </span>
+                    </div>
+                    <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200">
+                      <span className="block text-[10px] font-bold uppercase text-zinc-500">Avaliações Feitas</span>
+                      <span className="text-2xl font-bold font-condensed text-[#4A041C]">
+                        {avaliacoesDoBolsista.length}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Coluna 1: Lançar Presença em Atividades | Coluna 2: Avaliar Critérios + Parecer */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Lançar Presença nas Atividades */}
+                  <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs space-y-4 h-fit">
+                    <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+                      <CheckSquare size={18} className="text-[#D81B60]" /> Lançar Presença em Atividade
+                    </h3>
+
+                    <form onSubmit={handleRegistrarAtividadeBolsista} className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Data</label>
+                          <input
+                            type="date"
+                            required
+                            value={dataAtivBolsista}
+                            onChange={(e) => setDataAtivBolsista(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-300 p-2.5 text-xs font-semibold"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Situação</label>
+                          <select
+                            value={statusAtivBolsista}
+                            onChange={(e) => setStatusAtivBolsista(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-300 p-2.5 text-xs font-bold"
+                          >
+                            <option value="presente">✅ Presente</option>
+                            <option value="falta">❌ Falta</option>
+                            <option value="justificada">⚠️ Falta Justificada</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Tipo de Atividade</label>
+                        <select
+                          value={tipoAtivBolsista}
+                          onChange={(e) => setTipoAtivBolsista(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                        >
+                          <option value="Apoio em Turma">Apoio / Monitoria em Turma</option>
+                          <option value="Treino / Ensaio Técnico">Treino / Ensaio Técnico</option>
+                          <option value="Baile / Evento do Studio">Baile / Evento do Studio</option>
+                          <option value="Reunião Pedagógica">Reunião Pedagógica</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                          Observação da Atividade (Opcional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Auxiliou na turma de Forró Iniciante..."
+                          value={descricaoAtivBolsista}
+                          onChange={(e) => setDescricaoAtivBolsista(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full rounded-xl bg-[#4A041C] py-3 text-xs font-bold uppercase text-white hover:bg-[#D81B60] transition"
+                      >
+                        Registrar Presença do Bolsista
+                      </button>
+                    </form>
+
+                    {/* Histórico recente de atividades do bolsista */}
+                    <div className="pt-4 border-t border-zinc-100 space-y-2">
+                      <span className="block text-xs font-bold uppercase text-zinc-500">
+                        Últimas Atividades ({atividadesDoBolsista.length})
+                      </span>
+                      {atividadesDoBolsista.length === 0 ? (
+                        <p className="text-xs text-zinc-400">Nenhuma atividade lançada ainda.</p>
+                      ) : (
+                        <div className="space-y-2 max-h-56 overflow-y-auto">
+                          {atividadesDoBolsista.map((at) => (
+                            <div key={at.id} className="p-2.5 rounded-xl bg-zinc-50 border border-zinc-200 text-xs">
+                              <div className="flex items-center justify-between font-bold">
+                                <span className="text-[#4A041C]">
+                                  {at.data.split('-').reverse().join('/')} • {at.tipoAtividade}
+                                </span>
+                                <span
+                                  className={
+                                    at.status === 'presente'
+                                      ? 'text-emerald-700'
+                                      : at.status === 'falta'
+                                      ? 'text-red-600'
+                                      : 'text-amber-700'
+                                  }
+                                >
+                                  {at.status.toUpperCase()}
+                                </span>
+                              </div>
+                              {at.descricao && <p className="text-zinc-600 mt-1">{at.descricao}</p>}
+                              <span className="block text-[10px] text-zinc-400 mt-1">
+                                Lançado por: {at.lancadoPorNome}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Avaliar Desempenho + Anotação Restrita aos Administradores */}
+                  <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs space-y-5">
+                    <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+                      <Star size={18} className="text-[#D81B60]" /> Avaliar Desempenho de {bolsistaAtivo?.nome}
+                    </h3>
+
+                    <form onSubmit={handleSalvarAvaliacaoBolsista} className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {[
+                          { label: 'Assiduidade', val: notaAssiduidade, set: setNotaAssiduidade },
+                          { label: 'Participação & Proatividade', val: notaParticipacao, set: setNotaParticipacao },
+                          { label: 'Pontualidade', val: notaPontualidade, set: setNotaPontualidade },
+                          { label: 'Comprometimento & Postura', val: notaPostura, set: setNotaPostura },
+                        ].map((crit) => (
+                          <div key={crit.label} className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200">
+                            <div className="flex justify-between text-xs font-bold text-zinc-700 mb-2">
+                              <span>{crit.label}</span>
+                              <span className="text-[#D81B60]">{crit.val} / 5</span>
+                            </div>
+                            <div className="flex gap-1.5">
+                              {[1, 2, 3, 4, 5].map((num) => (
+                                <button
+                                  type="button"
+                                  key={num}
+                                  onClick={() => crit.set(num)}
+                                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition ${
+                                    crit.val >= num
+                                      ? 'bg-[#D81B60] text-white border-[#D81B60]'
+                                      : 'bg-white text-zinc-500 border-zinc-300'
+                                  }`}
+                                >
+                                  {num}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
+                        <label className="flex items-center gap-1.5 text-xs font-bold uppercase text-amber-900">
+                          <Lock size={14} className="text-amber-700" />
+                          Anotação / Parecer Técnico (Visível APENAS para a Coordenação Geral)
+                        </label>
+                        <p className="text-[11px] text-amber-800">
+                          Esta observação ficará registrada com o seu nome (<strong>{nomeProfessor}</strong>) e poderá ser lida exclusivamente pelos administradores do estúdio.
+                        </p>
+                        <textarea
+                          rows="3"
+                          required
+                          placeholder="Descreva a evolução, postura em aula, pontos fortes ou pontos de atenção do bolsista..."
+                          value={anotacaoAdmin}
+                          onChange={(e) => setAnotacaoAdmin(e.target.value)}
+                          className="w-full rounded-xl border border-amber-300 bg-white p-3 text-sm text-zinc-900"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={salvandoAvaliacao}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4A041C] to-[#D81B60] py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-sm hover:brightness-110"
+                      >
+                        <Save size={16} />
+                        {salvandoAvaliacao ? 'Registrando Avaliação...' : 'Salvar Avaliação & Anotação Assinada'}
+                      </button>
+                    </form>
+
+                    {/* Histórico de avaliações anteriores */}
+                    <div className="pt-4 border-t border-zinc-100 space-y-3">
+                      <span className="block text-xs font-bold uppercase text-zinc-500">
+                        Histórico de Avaliações Registradas ({avaliacoesDoBolsista.length})
+                      </span>
+
+                      {avaliacoesDoBolsista.length === 0 ? (
+                        <p className="text-xs text-zinc-400">Nenhuma avaliação registrada para este bolsista ainda.</p>
+                      ) : (
+                        <div className="space-y-3 max-h-72 overflow-y-auto">
+                          {avaliacoesDoBolsista.map((av) => (
+                            <div key={av.id} className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <span className="font-bold text-[#4A041C]">
+                                  Avaliador: {av.avaliadorNome}
+                                </span>
+                                <span className="px-2.5 py-0.5 rounded-full bg-[#D81B60] text-white font-bold">
+                                  Média: {av.mediaGeral} / 5
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2 text-[11px] text-zinc-600">
+                                <span>Assiduidade: <strong>{av.assiduidade}</strong></span> •
+                                <span>Participação: <strong>{av.participacao}</strong></span> •
+                                <span>Pontualidade: <strong>{av.pontualidade}</strong></span> •
+                                <span>Postura: <strong>{av.postura}</strong></span>
+                              </div>
+                              {av.anotacaoRestritaAdmin && (
+                                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-950">
+                                  <strong>Parecer restrito à Coordenação:</strong> {av.anotacaoRestritaAdmin}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* ABA PADRÃO: MINHAS TURMAS E DIÁRIO DE CLASSE                          */}
+        {/* ===================================================================== */}
+        {abaPrincipal === 'turmas' && !cursoSelecionado && (
           <>
             <div className="bg-gradient-to-r from-[#2D0210] via-[#4A041C] to-[#880E4F] rounded-2xl p-6 text-white shadow-md">
               <p className="text-[11px] font-bold uppercase tracking-widest text-[#E5C17B]">
@@ -401,8 +854,12 @@ export default function PainelProfessor() {
               )}
             </div>
           </>
-        ) : (
-          /* VISÃO INTERNA DA TURMA SELECIONADA */
+        )}
+
+        {/* ===================================================================== */}
+        {/* VISÃO INTERNA DA TURMA SELECIONADA                                    */}
+        {/* ===================================================================== */}
+        {cursoSelecionado && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs">
               <button
@@ -455,7 +912,6 @@ export default function PainelProfessor() {
               </div>
             </div>
 
-            {/* SUB-ABA: LISTA DE CHAMADA DO DIA */}
             {subAba === 'chamada' && (
               <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -538,10 +994,8 @@ export default function PainelProfessor() {
               </div>
             )}
 
-            {/* SUB-ABA: PANORAMA GERAL, POR DIA E ESPECÍFICO POR ALUNO */}
             {subAba === 'panorama' && (
               <div className="space-y-6">
-                {/* 1. Cards de Panorama Geral */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-xs">
                     <span className="text-[11px] font-bold uppercase text-zinc-500">Aulas com Chamada</span>
@@ -563,9 +1017,7 @@ export default function PainelProfessor() {
                   </div>
                 </div>
 
-                {/* 2. Visão Geral Consolidada por Aluno + Detalhamento Individual */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Tabela Consolidada */}
                   <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs">
                     <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] mb-4 flex items-center gap-2">
                       <BarChart3 size={18} className="text-[#D81B60]" /> Panorama Geral por Participante
@@ -628,13 +1080,10 @@ export default function PainelProfessor() {
                     )}
                   </div>
 
-                  {/* Ficha Específica de Frequência do Aluno */}
                   <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
-                        <UserCheck size={18} className="text-[#D81B60]" /> Detalhe Específico por Aluno
-                      </h3>
-                    </div>
+                    <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
+                      <UserCheck size={18} className="text-[#D81B60]" /> Detalhe Específico por Aluno
+                    </h3>
 
                     <select
                       value={alunoFiltroId}
@@ -691,7 +1140,6 @@ export default function PainelProfessor() {
                   </div>
                 </div>
 
-                {/* 3. Histórico Cronológico por Dia de Aula */}
                 <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs space-y-4">
                   <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
                     <Calendar size={18} className="text-[#D81B60]" /> Chamadas Realizadas por Dia
@@ -765,7 +1213,6 @@ export default function PainelProfessor() {
               </div>
             )}
 
-            {/* SUB-ABA: PLANOS DE AULA */}
             {subAba === 'planos' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs h-fit">
@@ -837,7 +1284,6 @@ export default function PainelProfessor() {
               </div>
             )}
 
-            {/* SUB-ABA: EMENTA */}
             {subAba === 'ementa' && (
               <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-xs max-w-3xl">
                 <h3 className="text-lg font-bold uppercase font-condensed text-[#4A041C] mb-3">
