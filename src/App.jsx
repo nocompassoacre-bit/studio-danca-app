@@ -3,6 +3,7 @@ import { AuthProvider } from './AuthContext';
 import ProtectedRoute from './ProtectedRoute';
 import HomePublica from './HomePublica';
 import PainelAdmin from './PainelAdmin';
+import PainelProfessor from './PainelProfessor';
 import InscricaoPublica from './InscricaoPublica';
 
 const PlaceholderPainel = ({ titulo }) => (
@@ -31,7 +32,7 @@ export default function App() {
             path="/professor/*"
             element={
               <ProtectedRoute allowedRole="prof">
-                <PlaceholderPainel titulo="Painel do Professor (Etapa 3)" />
+                <PainelProfessor />
               </ProtectedRoute>
             }
           />
