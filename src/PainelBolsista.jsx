@@ -23,6 +23,7 @@ import {
   RefreshCw,
   MessageSquare,
   Send,
+  Building2,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
@@ -161,14 +162,15 @@ export default function PainelBolsista() {
   const [todasPresencasHoje, setTodasPresencasHoje] = useState([]);
   const [avaliacoes, setAvaliacoes] = useState([]);
   const [atividadesDisponiveis, setAtividadesDisponiveis] = useState([]);
+  const [turmasParaMensagem, setTurmasParaMensagem] = useState([]);
+  const [minhasMensagens, setMinhasMensagens] = useState([]);
 
-  // Estados de Mensagens
-  const [professoresLista, setProfessoresLista] = useState([]);
-  const [mensagens, setMensagens] = useState([]);
-  const [destinoMensagem, setDestinoMensagem] = useState('admin'); // 'admin' ou uid do professor
-  const [assuntoMensagem, setAssuntoMensagem] = useState('');
+  // Estados da Aba Mensagens
+  const [destinoTipo, setDestinoTipo] = useState('coordenacao');
+  const [cursoMensagemId, setCursoMensagemId] = useState('');
+  const [assuntoMensagem, setAssuntoMensagem] = useState('Escala / Monitoria / Bolsa');
   const [textoMensagem, setTextoMensagem] = useState('');
-  const [enviandoMensagem, setEnviandoMensagem] = useState(false);
+  const [enviandoMsg, setEnviandoMsg] = useState(false);
 
   // Estados de Localização e Horário
   const [atividadeSelecionadaKey, setAtividadeSelecionadaKey] = useState('');
@@ -256,8 +258,12 @@ export default function PainelBolsista() {
           )
         ),
         getDocs(collection(db, 'eventos')),
-        getDocs(collection(db, 'users')),
-        getDocs(collection(db, 'mensagens')),
+        getDocs(
+          query(
+            collection(db, 'mensagens'),
+            where('remetenteId', '==', user.uid)
+          )
+        ),
       ]);
 
       const extrair = (res) =>
@@ -275,26 +281,9 @@ export default function PainelBolsista() {
       const todosCursos = extrair(resultados[3]).filter((c) => c.ativo !== false);
       const minhasMatriculas = extrair(resultados[4]);
       const todosEventos = extrair(resultados[5]);
-      const todosUsuarios = extrair(resultados[6]);
-      const todasMensagens = extrair(resultados[7]);
-
-      // Professores para envio de mensagem
-      const profs = todosUsuarios.filter((u) =>
-        Array.isArray(u.roles) ? u.roles.includes('prof') : u.role === 'prof'
+      const listaMsgs = extrair(resultados[6]).sort((a, b) =>
+        (b.dataEnvio || '').localeCompare(a.dataEnvio || '')
       );
-      setProfessoresLista(profs);
-
-      // Mensagens enviadas por este bolsista OU destinadas a ele / todos os bolsistas
-      const minhasMsgs = todasMensagens
-        .filter(
-          (m) =>
-            m.remetenteId === user.uid ||
-            m.destinatarioId === user.uid ||
-            m.destinatarioTipo === 'todos_bolsistas' ||
-            m.destinatarioTipo === 'todos'
-        )
-        .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
-      setMensagens(minhasMsgs);
 
       // 1. Turmas vinculadas
       const idsMatriculados = new Set(minhasMatriculas.map((m) => m.cursoId));
@@ -305,6 +294,11 @@ export default function PainelBolsista() {
       );
       const listaTurmasBase =
         cursosVinculados.length > 0 ? cursosVinculados : todosCursos;
+
+      setTurmasParaMensagem(listaTurmasBase);
+      if (listaTurmasBase.length > 0 && !cursoMensagemId) {
+        setCursoMensagemId(listaTurmasBase[0].id);
+      }
 
       const itensTurmas = listaTurmasBase.map((c) => ({
         key: `curso_${c.id}`,
@@ -341,7 +335,7 @@ export default function PainelBolsista() {
           dataInfo: dataIsoEv,
           dataEspecifica: dataIsoEv,
           horaInicio: ev.horaInicio,
-          horarioFim: ev.horaFim,
+          horarioFim: ev.horarioFim,
           localNome: ev.local || 'Local do Evento',
           lat: typeof ev.lat === 'number' ? ev.lat : STUDIO_LAT,
           lng: typeof ev.lng === 'number' ? ev.lng : STUDIO_LNG,
@@ -356,6 +350,7 @@ export default function PainelBolsista() {
       setTodasPresencasHoje(presHoje);
       setAvaliacoes(listaAval);
       setAtividadesDisponiveis(unificados);
+      setMinhasMensagens(listaMsgs);
 
       if (unificados.length > 0 && !atividadeSelecionadaKey) {
         setAtividadeSelecionadaKey(unificados[0].key);
@@ -371,7 +366,6 @@ export default function PainelBolsista() {
     carregarDadosBolsista();
   }, [user?.uid]);
 
-  // Notificações 1h antes do início e no fim (Turmas + Eventos)
   useEffect(() => {
     if (permissaoNotif !== 'granted' || atividadesDisponiveis.length === 0) return;
 
@@ -443,34 +437,69 @@ export default function PainelBolsista() {
     e.preventDefault();
     if (!textoMensagem.trim() || !user?.uid) return;
 
-    setEnviandoMensagem(true);
-    try {
-      const profSelecionado = professoresLista.find((p) => p.id === destinoMensagem);
-      const isParaAdmin = destinoMensagem === 'admin';
+    if (destinoTipo === 'professor') {
+      const turmaAlvo = turmasParaMensagem.find((t) => t.id === cursoMensagemId);
+      if (!turmaAlvo) {
+        alert('Selecione uma turma para enviar a mensagem ao professor.');
+        return;
+      }
 
+      setEnviandoMsg(true);
+      try {
+        await addDoc(collection(db, 'mensagens'), {
+          remetenteId: user.uid,
+          remetenteNome: `${userData?.nome || user.email} (Bolsista)`,
+          remetenteTelefone: userData?.telefone || '',
+          remetenteRole: 'bolsista',
+          destinoTipo: 'professor',
+          destinatarioId: turmaAlvo.profId || '',
+          destinatarioNome: turmaAlvo.professoresNomes || 'Professor(a)',
+          cursoId: turmaAlvo.id,
+          cursoTitulo: turmaAlvo.titulo,
+          assunto: assuntoMensagem,
+          texto: `[Bolsista • ${assuntoMensagem}] ${textoMensagem.trim()}`,
+          lida: false,
+          resposta: '',
+          dataEnvio: new Date().toISOString(),
+        });
+
+        setTextoMensagem('');
+        alert(`✅ Mensagem enviada para ${turmaAlvo.professoresNomes || 'o(a) professor(a)'}!`);
+        carregarDadosBolsista();
+      } catch (err) {
+        alert('Erro ao enviar mensagem: ' + err.message);
+      } finally {
+        setEnviandoMsg(false);
+      }
+      return;
+    }
+
+    setEnviandoMsg(true);
+    try {
       await addDoc(collection(db, 'mensagens'), {
         remetenteId: user.uid,
-        remetenteNome: `${userData?.nome || 'Bolsista'} (Bolsista)`,
+        remetenteNome: `${userData?.nome || user.email} (Bolsista)`,
+        remetenteTelefone: userData?.telefone || '',
         remetenteRole: 'bolsista',
-        destinatarioTipo: isParaAdmin ? 'admin' : 'prof',
-        destinatarioId: isParaAdmin ? 'admin' : destinoMensagem,
-        destinatarioNome: isParaAdmin
-          ? 'Coordenação Geral / Admin'
-          : `Prof. ${profSelecionado?.nome || ''}`,
-        assunto: assuntoMensagem.trim() || 'Comunicado de Bolsista',
-        texto: textoMensagem.trim(),
+        destinoTipo: 'coordenacao',
+        destinatarioId: 'coordenacao',
+        destinatarioNome: 'Coordenação Geral',
+        cursoId: '',
+        cursoTitulo: 'Equipe de Bolsistas',
+        assunto: assuntoMensagem,
+        texto: `[Bolsista • ${assuntoMensagem}] ${textoMensagem.trim()}`,
         lida: false,
-        criadoEm: new Date().toISOString(),
+        resposta: '',
+        dataEnvio: new Date().toISOString(),
       });
 
-      setAssuntoMensagem('');
       setTextoMensagem('');
-      alert('✅ Mensagem enviada com sucesso!');
+      alert('✅ Mensagem enviada para a Coordenação Geral!');
       carregarDadosBolsista();
     } catch (err) {
       alert('Erro ao enviar mensagem: ' + err.message);
     } finally {
-      setEnviandoMensagem(false);
+      setEnviandoMsg(false);
     }
   };
 
@@ -624,7 +653,7 @@ export default function PainelBolsista() {
   const abas = [
     { id: 'visao_geral', label: 'Minha Bolsa & Check-in', icon: Award },
     { id: 'desempenho', label: 'Minhas Avaliações', icon: TrendingUp },
-    { id: 'mensagens', label: `Mensagens (${mensagens.length})`, icon: MessageSquare },
+    { id: 'mensagens', label: `Mensagens (${minhasMensagens.length})`, icon: MessageSquare },
     { id: 'turmas_perfil', label: 'Agenda & Conta', icon: BookOpen },
   ];
 
@@ -989,131 +1018,194 @@ export default function PainelBolsista() {
           </div>
         ) : abaAtiva === 'mensagens' ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
-              <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
-                <Send size={18} className="text-[#D81B60]" /> Enviar Mensagem / Justificativa
-              </h3>
+            <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
+              <div className="flex items-center gap-2 text-[#4A041C]">
+                <MessageSquare size={20} className="text-[#D81B60]" />
+                <h3 className="text-lg font-bold uppercase font-condensed">
+                  Enviar Mensagem / Comunicado
+                </h3>
+              </div>
 
-              <form onSubmit={handleEnviarMensagem} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Destinatário
-                  </label>
-                  <select
-                    value={destinoMensagem}
-                    onChange={(e) => setDestinoMensagem(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
+              <div>
+                <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
+                  Destinatário
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDestinoTipo('coordenacao');
+                      setAssuntoMensagem('Escala / Monitoria / Bolsa');
+                    }}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold uppercase border transition ${
+                      destinoTipo === 'coordenacao'
+                        ? 'bg-[#4A041C] text-white border-[#4A041C]'
+                        : 'bg-zinc-50 text-zinc-700 border-zinc-300 hover:bg-zinc-100'
+                    }`}
                   >
-                    <option value="admin">🏛️ Coordenação Geral / Administração</option>
-                    {professoresLista.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        💃 Prof. {p.nome}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    <Building2 size={14} /> Coordenação Geral
+                  </button>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Assunto
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: Justificativa de ausência, dúvida sobre escala..."
-                    value={assuntoMensagem}
-                    onChange={(e) => setAssuntoMensagem(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDestinoTipo('professor');
+                      setAssuntoMensagem('Monitoria / Apoio na Turma');
+                    }}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold uppercase border transition ${
+                      destinoTipo === 'professor'
+                        ? 'bg-[#D81B60] text-white border-[#D81B60]'
+                        : 'bg-zinc-50 text-zinc-700 border-zinc-300 hover:bg-zinc-100'
+                    }`}
+                  >
+                    <UserCheck size={14} /> Professor da Turma
+                  </button>
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Mensagem
-                  </label>
-                  <textarea
-                    rows="4"
-                    required
-                    placeholder="Escreva aqui sua mensagem para a coordenação ou professor..."
-                    value={textoMensagem}
-                    onChange={(e) => setTextoMensagem(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-3 text-sm text-zinc-900"
-                  />
+              {destinoTipo === 'professor' && turmasParaMensagem.length === 0 ? (
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                  Nenhuma turma ativa localizada no momento. Utilize a opção{' '}
+                  <strong>Coordenação Geral</strong> acima para enviar seu recado.
                 </div>
+              ) : (
+                <form onSubmit={handleEnviarMensagem} className="space-y-3">
+                  {destinoTipo === 'professor' && (
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                        Turma / Professor(a)
+                      </label>
+                      <select
+                        value={cursoMensagemId}
+                        onChange={(e) => setCursoMensagemId(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold text-zinc-900"
+                      >
+                        {turmasParaMensagem.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.titulo} — Prof. {t.professoresNomes}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
-                <button
-                  type="submit"
-                  disabled={enviandoMensagem}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#D81B60] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#AD1457] transition"
-                >
-                  <Send size={15} />
-                  {enviandoMensagem ? 'Enviando...' : 'Enviar Mensagem'}
-                </button>
-              </form>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                      Assunto
+                    </label>
+                    <select
+                      value={assuntoMensagem}
+                      onChange={(e) => setAssuntoMensagem(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm text-zinc-900"
+                    >
+                      {destinoTipo === 'coordenacao' ? (
+                        <>
+                          <option value="Escala / Monitoria / Bolsa">
+                            Escala / Monitoria / Bolsa
+                          </option>
+                          <option value="Justificativa de Falta / Atraso">
+                            Justificativa de Falta / Atraso
+                          </option>
+                          <option value="Problema no Check-in GPS">
+                            Problema no Check-in GPS
+                          </option>
+                          <option value="Outros Assuntos">
+                            Outros Assuntos
+                          </option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Monitoria / Apoio na Turma">
+                            Monitoria / Apoio na Turma
+                          </option>
+                          <option value="Aviso de Atraso / Ausência na Aula">
+                            Aviso de Atraso / Ausência na Aula
+                          </option>
+                          <option value="Dúvida Técnica / Coreografia">
+                            Dúvida Técnica / Coreografia
+                          </option>
+                          <option value="Outro Assunto">Outro Assunto</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                      Mensagem
+                    </label>
+                    <textarea
+                      rows="4"
+                      required
+                      placeholder={
+                        destinoTipo === 'coordenacao'
+                          ? 'Escreva seu comunicado ou justificativa para a coordenação...'
+                          : 'Escreva seu recado para o(a) professor(a) da turma...'
+                      }
+                      value={textoMensagem}
+                      onChange={(e) => setTextoMensagem(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-300 p-3 text-sm text-zinc-900"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={enviandoMsg}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] py-3 text-xs font-bold uppercase tracking-wider text-white transition shadow"
+                  >
+                    <Send size={15} />
+                    {enviandoMsg
+                      ? 'Enviando...'
+                      : destinoTipo === 'coordenacao'
+                      ? 'Enviar para Coordenação Geral'
+                      : 'Enviar Mensagem ao Professor'}
+                  </button>
+                </form>
+              )}
             </div>
 
-            <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
-              <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
-                <MessageSquare size={18} className="text-[#D81B60]" /> Caixa de Mensagens & Avisos ({mensagens.length})
+            <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
+              <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900">
+                Minhas Mensagens ({minhasMensagens.length})
               </h3>
 
-              {mensagens.length === 0 ? (
-                <p className="text-sm text-zinc-400 py-10 text-center">
-                  Nenhuma mensagem enviada ou recebida ainda.
+              {minhasMensagens.length === 0 ? (
+                <p className="text-xs text-zinc-400 py-8 text-center">
+                  Você ainda não enviou nenhuma mensagem.
                 </p>
               ) : (
-                <div className="space-y-3 max-h-[520px] overflow-y-auto">
-                  {mensagens.map((m) => {
-                    const enviadaPorMim = m.remetenteId === user?.uid;
-                    return (
-                      <div
-                        key={m.id}
-                        className={`p-4 rounded-xl border space-y-1.5 ${
-                          enviadaPorMim
-                            ? 'bg-zinc-50 border-zinc-200'
-                            : 'bg-pink-50/60 border-[#D81B60]/30'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                              enviadaPorMim
-                                ? 'bg-cyan-100 text-cyan-900'
-                                : 'bg-[#4A041C] text-white'
-                            }`}
-                          >
-                            {enviadaPorMim
-                              ? `Enviada para: ${m.destinatarioNome || 'Coordenação'}`
-                              : `Recebida de: ${m.remetenteNome || 'Coordenação'}`}
-                          </span>
-                          <span className="text-[11px] text-zinc-400">
-                            {m.criadoEm
-                              ? new Date(m.criadoEm).toLocaleString('pt-BR', {
-                                  dateStyle: 'short',
-                                  timeStyle: 'short',
-                                })
-                              : ''}
-                          </span>
-                        </div>
-
-                        <h4 className="text-sm font-bold text-zinc-900">
-                          {m.assunto || 'Mensagem'}
-                        </h4>
-                        <p className="text-xs text-zinc-700 whitespace-pre-line leading-relaxed">
-                          {m.texto}
-                        </p>
-
-                        {m.resposta && (
-                          <div className="mt-2 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-950">
-                            <strong className="block text-[10px] uppercase text-emerald-800 mb-0.5">
-                              Resposta ({m.respondidoPorNome || 'Coordenação'}):
-                            </strong>
-                            {m.resposta}
-                          </div>
-                        )}
+                <div className="space-y-3 max-h-[480px] overflow-y-auto">
+                  {minhasMensagens.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-[#4A041C]">
+                          {msg.cursoTitulo || 'Equipe de Bolsistas'}
+                        </span>
+                        <span className="text-[10px] text-zinc-400">
+                          {msg.dataEnvio
+                            ? new Date(msg.dataEnvio).toLocaleDateString('pt-BR')
+                            : ''}
+                        </span>
                       </div>
-                    );
-                  })}
+                      <p className="text-[11px] font-semibold text-[#D81B60]">
+                        Para: {msg.destinatarioNome}
+                      </p>
+                      <p className="text-zinc-800 bg-white p-2.5 rounded-lg border border-zinc-200">
+                        {msg.texto}
+                      </p>
+                      {msg.resposta && (
+                        <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-950">
+                          <strong className="block text-[10px] uppercase text-emerald-800">
+                            Resposta de {msg.respondidoPor || msg.destinatarioNome}:
+                          </strong>
+                          {msg.resposta}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
