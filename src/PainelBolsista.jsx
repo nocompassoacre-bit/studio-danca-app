@@ -26,14 +26,12 @@ import { db } from './firebase';
 import { useAuth } from './AuthContext';
 import SegurancaSenhaCard from './SegurancaSenhaCard';
 
-// Coordenadas oficiais: Stúdio de Dança "No Compasso" - Estr. das Placas, 1909
 const STUDIO_LAT = -9.9406271;
 const STUDIO_LNG = -67.8227701;
-const RAIO_MAXIMO_METROS = 120; // Margem segura para GPS interno
+const RAIO_MAXIMO_METROS = 130;
 
-// Cálculo de distância em metros (Fórmula de Haversine)
 function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // Raio da Terra em metros
+  const R = 6371e3;
   const rad = Math.PI / 180;
   const dLat = (lat2 - lat1) * rad;
   const dLon = (lon2 - lon1) * rad;
@@ -47,7 +45,6 @@ function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
   return Math.round(R * c);
 }
 
-// Gera ou recupera assinatura única do dispositivo (impede 2 presenças no mesmo celular)
 function obterIdentificadorAparelho() {
   const chaveStorage = 'nocompasso_device_uid_v1';
   let idSalvo = localStorage.getItem(chaveStorage);
@@ -71,7 +68,6 @@ function obterIdentificadorAparelho() {
   return idSalvo;
 }
 
-// Converte "HH:MM" em minutos desde 00:00
 function horaParaMinutos(horaStr) {
   if (!horaStr || !horaStr.includes(':')) return null;
   const [h, m] = horaStr.split(':').map(Number);
@@ -79,7 +75,6 @@ function horaParaMinutos(horaStr) {
   return h * 60 + m;
 }
 
-// Verifica se o curso ocorre no dia da semana atual (0=Dom, 1=Seg, ..., 6=Sab)
 function cursoOcorreHoje(dataInfo, diaSemanaIndex) {
   if (!dataInfo) return true;
   const texto = dataInfo
@@ -97,12 +92,11 @@ function cursoOcorreHoje(dataInfo, diaSemanaIndex) {
     ['sab'],
   ];
 
-  // Se o texto menciona algum dia da semana, checa se inclui o de hoje
   const algumDiaCitado = mapaDias
     .flat()
     .some((sigla) => texto.includes(sigla));
 
-  if (!algumDiaCitado) return true; // Ex: "Todos os dias" ou data específica
+  if (!algumDiaCitado) return true;
   return mapaDias[diaSemanaIndex].some((sigla) => texto.includes(sigla));
 }
 
@@ -164,16 +158,15 @@ export default function PainelBolsista() {
   const [presencas, setPresencas] = useState([]);
   const [todasPresencasHoje, setTodasPresencasHoje] = useState([]);
   const [avaliacoes, setAvaliacoes] = useState([]);
-  const [minhasTurmas, setMinhasTurmas] = useState([]);
+  const [atividadesDisponiveis, setAtividadesDisponiveis] = useState([]);
 
   // Estados de Localização e Horário
-  const [turmaSelecionadaId, setTurmaSelecionadaId] = useState('');
-  const [distanciaStudio, setDistanciaStudio] = useState(null);
+  const [atividadeSelecionadaKey, setAtividadeSelecionadaKey] = useState('');
+  const [coordsUsuario, setCoordsUsuario] = useState(null);
   const [erroGps, setErroGps] = useState('');
   const [buscandoGps, setBuscandoGps] = useState(false);
   const [agora, setAgora] = useState(new Date());
 
-  // Notificações
   const [permissaoNotif, setPermissaoNotif] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'denied'
   );
@@ -182,13 +175,11 @@ export default function PainelBolsista() {
   const deviceId = useMemo(() => obterIdentificadorAparelho(), []);
   const hojeIso = agora.toISOString().split('T')[0];
 
-  // Relógio em tempo real (atualiza a cada 30s)
   useEffect(() => {
     const timer = setInterval(() => setAgora(new Date()), 30000);
     return () => clearInterval(timer);
   }, []);
 
-  // Verifica GPS automaticamente ao abrir
   const verificarLocalizacaoAtual = () => {
     if (!('geolocation' in navigator)) {
       setErroGps('Seu navegador/celular não suporta geolocalização.');
@@ -198,13 +189,10 @@ export default function PainelBolsista() {
     setErroGps('');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const dist = calcularDistanciaMetros(
-          pos.coords.latitude,
-          pos.coords.longitude,
-          STUDIO_LAT,
-          STUDIO_LNG
-        );
-        setDistanciaStudio(dist);
+        setCoordsUsuario({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
         setBuscandoGps(false);
       },
       (err) => {
@@ -257,6 +245,7 @@ export default function PainelBolsista() {
             where('alunoId', '==', user.uid)
           )
         ),
+        getDocs(collection(db, 'eventos')),
       ]);
 
       const extrair = (res) =>
@@ -273,28 +262,71 @@ export default function PainelBolsista() {
       );
       const todosCursos = extrair(resultados[3]).filter((c) => c.ativo !== false);
       const minhasMatriculas = extrair(resultados[4]);
+      const todosEventos = extrair(resultados[5]);
 
-      // Filtra as turmas em que o bolsista está cadastrado (via matrícula ou vínculo direto)
-      const idsMatriculados = new Set(
-        minhasMatriculas.map((m) => m.cursoId)
-      );
+      // 1. Turmas vinculadas
+      const idsMatriculados = new Set(minhasMatriculas.map((m) => m.cursoId));
       const cursosVinculados = todosCursos.filter(
         (c) =>
           idsMatriculados.has(c.id) ||
           (Array.isArray(c.bolsistasIds) && c.bolsistasIds.includes(user.uid))
       );
-
-      // Se ainda não houver matrícula formal vinculada, mostra os cursos ativos como fallback
-      const listaFinalTurmas =
+      const listaTurmasBase =
         cursosVinculados.length > 0 ? cursosVinculados : todosCursos;
+
+      const itensTurmas = listaTurmasBase.map((c) => ({
+        key: `curso_${c.id}`,
+        id: c.id,
+        categoria: 'turma',
+        titulo: c.titulo,
+        subtitulo: `${c.dataInfo} • ${c.horaInicio} às ${c.horarioFim}`,
+        dataInfo: c.dataInfo,
+        dataEspecifica: null,
+        horaInicio: c.horaInicio,
+        horarioFim: c.horarioFim,
+        localNome: 'Studio No Compasso (Estr. das Placas, 1909)',
+        lat: STUDIO_LAT,
+        lng: STUDIO_LNG,
+        professoresNomes: c.professoresNomes,
+        frente: c.frente,
+      }));
+
+      // 2. Eventos/Espetáculos em que o bolsista foi escalado
+      const eventosEscalados = todosEventos.filter(
+        (ev) => Array.isArray(ev.bolsistasIds) && ev.bolsistasIds.includes(user.uid)
+      );
+
+      const itensEventos = eventosEscalados.map((ev) => {
+        const dataIsoEv = ev.data?.includes('/')
+          ? ev.data.split('/').reverse().join('-')
+          : ev.data || '';
+        return {
+          key: `evento_${ev.id}`,
+          id: ev.id,
+          categoria: 'evento',
+          titulo: `🎭 Evento: ${ev.titulo}`,
+          subtitulo: `${dataIsoEv.split('-').reverse().join('/')} • ${ev.horaInicio} às ${ev.horaFim} • ${ev.local}`,
+          dataInfo: dataIsoEv,
+          dataEspecifica: dataIsoEv,
+          horaInicio: ev.horaInicio,
+          horarioFim: ev.horaFim,
+          localNome: ev.local || 'Local do Evento',
+          lat: typeof ev.lat === 'number' ? ev.lat : STUDIO_LAT,
+          lng: typeof ev.lng === 'number' ? ev.lng : STUDIO_LNG,
+          professoresNomes: 'Coordenação Geral',
+          frente: 'Evento / Espetáculo',
+        };
+      });
+
+      const unificados = [...itensEventos, ...itensTurmas];
 
       setPresencas(listaPres);
       setTodasPresencasHoje(presHoje);
       setAvaliacoes(listaAval);
-      setMinhasTurmas(listaFinalTurmas);
+      setAtividadesDisponiveis(unificados);
 
-      if (listaFinalTurmas.length > 0 && !turmaSelecionadaId) {
-        setTurmaSelecionadaId(listaFinalTurmas[0].id);
+      if (unificados.length > 0 && !atividadeSelecionadaKey) {
+        setAtividadeSelecionadaKey(unificados[0].key);
       }
     } catch (err) {
       console.error('Erro ao carregar portal do bolsista:', err);
@@ -307,55 +339,58 @@ export default function PainelBolsista() {
     carregarDadosBolsista();
   }, [user?.uid]);
 
-  // Sistema de Notificações (1h antes do início e no horário de término)
+  // Notificações 1h antes do início e no fim (Turmas + Eventos)
   useEffect(() => {
-    if (permissaoNotif !== 'granted' || minhasTurmas.length === 0) return;
+    if (permissaoNotif !== 'granted' || atividadesDisponiveis.length === 0) return;
 
     const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
     const diaHoje = agora.getDay();
     const primeiroNome = (userData?.nome || 'Bolsista').split(' ')[0];
 
-    minhasTurmas.forEach((turma) => {
-      if (!cursoOcorreHoje(turma.dataInfo, diaHoje)) return;
+    atividadesDisponiveis.forEach((ativ) => {
+      const ocorreHoje =
+        ativ.categoria === 'evento'
+          ? ativ.dataEspecifica === hojeIso
+          : cursoOcorreHoje(ativ.dataInfo, diaHoje);
 
-      const minInicio = horaParaMinutos(turma.horaInicio);
-      const minFim = horaParaMinutos(turma.horarioFim);
+      if (!ocorreHoje) return;
 
-      // 1. Notificação 1 hora antes do início (janela entre -60 e -55 min)
+      const minInicio = horaParaMinutos(ativ.horaInicio);
+      const minFim = horaParaMinutos(ativ.horarioFim);
+
       if (minInicio !== null) {
         const diffInicio = minInicio - minutosAgora;
-        const chaveNotifAntes = `notif_antes_${hojeIso}_${turma.id}_${user?.uid}`;
+        const chaveNotifAntes = `notif_antes_${hojeIso}_${ativ.key}_${user?.uid}`;
         if (
           diffInicio <= 60 &&
           diffInicio >= 55 &&
           !localStorage.getItem(chaveNotifAntes)
         ) {
           new Notification('No Compasso Studio de Dança', {
-            body: `Olá ${primeiroNome}, sua aula de ${turma.titulo} está perto de começar (às ${turma.horaInicio}), por favor não atrase.`,
+            body: `Olá ${primeiroNome}, sua atividade "${ativ.titulo}" está perto de começar (às ${ativ.horaInicio}), por favor não atrase.`,
             icon: '/logo-studio.png',
           });
           localStorage.setItem(chaveNotifAntes, 'enviada');
         }
       }
 
-      // 2. Notificação no fim da aula (janela entre 0 e +10 min após o fim)
       if (minFim !== null) {
         const diffFim = minutosAgora - minFim;
-        const chaveNotifFim = `notif_fim_${hojeIso}_${turma.id}_${user?.uid}`;
+        const chaveNotifFim = `notif_fim_${hojeIso}_${ativ.key}_${user?.uid}`;
         if (
           diffFim >= 0 &&
           diffFim <= 10 &&
           !localStorage.getItem(chaveNotifFim)
         ) {
           new Notification('Marque sua Presença - No Compasso', {
-            body: `Olá ${primeiroNome}, não esqueça de marcar sua presença na atividade "${turma.titulo}" que acabou de participar!`,
+            body: `Olá ${primeiroNome}, não esqueça de marcar sua presença na atividade "${ativ.titulo}" que acabou de participar!`,
             icon: '/logo-studio.png',
           });
           localStorage.setItem(chaveNotifFim, 'enviada');
         }
       }
     });
-  }, [agora, permissaoNotif, minhasTurmas, userData?.nome, hojeIso, user?.uid]);
+  }, [agora, permissaoNotif, atividadesDisponiveis, userData?.nome, hojeIso, user?.uid]);
 
   const solicitarPermissaoNotificacoes = async () => {
     if (!('Notification' in window)) {
@@ -366,43 +401,60 @@ export default function PainelBolsista() {
     setPermissaoNotif(res);
     if (res === 'granted') {
       new Notification('Lembretes Ativados!', {
-        body: `Olá ${(userData?.nome || '').split(' ')[0]}, você será avisado 1h antes das aulas e ao término para marcar presença.`,
+        body: `Olá ${(userData?.nome || '').split(' ')[0]}, você será avisado 1h antes das aulas/eventos e ao término para marcar presença.`,
         icon: '/logo-studio.png',
       });
     }
   };
 
-  // Avaliação das regras para a turma selecionada
-  const turmaAtual = minhasTurmas.find((t) => t.id === turmaSelecionadaId);
+  const atividadeAtual = atividadesDisponiveis.find(
+    (a) => a.key === atividadeSelecionadaKey
+  );
+
+  // Calcula distância dinâmica entre o celular do bolsista e o local da atividade escolhida (Studio ou Teatro/Evento)
+  const distanciaAlvo = useMemo(() => {
+    if (!coordsUsuario || !atividadeAtual) return null;
+    return calcularDistanciaMetros(
+      coordsUsuario.lat,
+      coordsUsuario.lng,
+      atividadeAtual.lat,
+      atividadeAtual.lng
+    );
+  }, [coordsUsuario, atividadeAtual]);
+
   const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
   const diaHoje = agora.getDay();
 
   const avaliacaoJanela = useMemo(() => {
-    if (!turmaAtual) {
-      return { liberado: false, motivo: 'Nenhuma turma vinculada.' };
+    if (!atividadeAtual) {
+      return { liberado: false, motivo: 'Nenhuma turma ou evento vinculado.' };
     }
 
-    const ehHoje = cursoOcorreHoje(turmaAtual.dataInfo, diaHoje);
+    const ehHoje =
+      atividadeAtual.categoria === 'evento'
+        ? atividadeAtual.dataEspecifica === hojeIso
+        : cursoOcorreHoje(atividadeAtual.dataInfo, diaHoje);
+
     if (!ehHoje) {
       return {
         liberado: false,
-        motivo: `Esta turma acontece em (${turmaAtual.dataInfo}), não hoje.`,
+        motivo: `Agendado para (${atividadeAtual.dataInfo.split('-').reverse().join('/')}), não hoje.`,
       };
     }
 
-    const minFim = horaParaMinutos(turmaAtual.horarioFim);
+    const minFim = horaParaMinutos(atividadeAtual.horarioFim);
     if (minFim === null) {
       return {
         liberado: false,
-        motivo: 'Horário de término da turma não configurado pela coordenação.',
+        motivo: 'Horário de término não configurado pela coordenação.',
       };
     }
 
-    const minLimite = minFim + 60; // Até 1 hora depois do fim
+    const minLimite = minFim + 60;
     if (minutosAgora < minFim) {
       return {
         liberado: false,
-        motivo: `Aguarde o fim da aula. A presença abre às ${turmaAtual.horarioFim}.`,
+        motivo: `Aguarde o encerramento. A presença abre às ${atividadeAtual.horarioFim}.`,
       };
     }
     if (minutosAgora > minLimite) {
@@ -415,22 +467,19 @@ export default function PainelBolsista() {
     }
 
     return { liberado: true, motivo: 'Dentro do horário permitido!' };
-  }, [turmaAtual, minutosAgora, diaHoje]);
+  }, [atividadeAtual, minutosAgora, diaHoje, hojeIso]);
 
   const noLocalCorreto =
-    distanciaStudio !== null && distanciaStudio <= RAIO_MAXIMO_METROS;
+    distanciaAlvo !== null && distanciaAlvo <= RAIO_MAXIMO_METROS;
 
-  // Verifica se ESTE CELULAR ou ESTE BOLSISTA já marcou presença nesta atividade hoje
-  const chaveAtividadeHoje = turmaAtual ? `${hojeIso}_${turmaAtual.id}` : '';
+  const chaveAtividadeHoje = atividadeAtual
+    ? `${hojeIso}_${atividadeAtual.key}`
+    : '';
   const aparelhoJaUsadoNestaAtividade = todasPresencasHoje.some(
-    (p) =>
-      p.atividadeChave === chaveAtividadeHoje &&
-      p.deviceId === deviceId
+    (p) => p.atividadeChave === chaveAtividadeHoje && p.deviceId === deviceId
   );
   const bolsistaJaMarcouNestaAtividade = todasPresencasHoje.some(
-    (p) =>
-      p.atividadeChave === chaveAtividadeHoje &&
-      p.bolsistaId === user?.uid
+    (p) => p.atividadeChave === chaveAtividadeHoje && p.bolsistaId === user?.uid
   );
 
   const podeConfirmarPresenca =
@@ -441,20 +490,21 @@ export default function PainelBolsista() {
 
   const handleRegistrarPresenca = async (e) => {
     e.preventDefault();
-    if (!podeConfirmarPresenca || !turmaAtual || !user?.uid) return;
+    if (!podeConfirmarPresenca || !atividadeAtual || !user?.uid) return;
 
     setRegistrandoCheckin(true);
     try {
       await addDoc(collection(db, 'presencas_bolsistas'), {
         bolsistaId: user.uid,
         bolsistaNome: userData?.nome || 'Bolsista',
-        cursoId: turmaAtual.id,
+        cursoId: atividadeAtual.categoria === 'turma' ? atividadeAtual.id : '',
+        eventoId: atividadeAtual.categoria === 'evento' ? atividadeAtual.id : '',
         atividadeChave: chaveAtividadeHoje,
         deviceId,
-        distanciaMetros: distanciaStudio,
+        distanciaMetros: distanciaAlvo,
         data: hojeIso,
-        tipoAtividade: `Turma: ${turmaAtual.titulo}`,
-        descricao: `${turmaAtual.dataInfo} (${turmaAtual.horaInicio} às ${turmaAtual.horarioFim}) • GPS: ${distanciaStudio}m`,
+        tipoAtividade: atividadeAtual.titulo,
+        descricao: `${atividadeAtual.localNome} (${atividadeAtual.horaInicio} às ${atividadeAtual.horarioFim}) • GPS: ${distanciaAlvo}m`,
         status: 'presente',
         lancadoPorId: user.uid,
         lancadoPorNome: `${userData?.nome || 'Bolsista'} (Check-in GPS Validado)`,
@@ -462,7 +512,7 @@ export default function PainelBolsista() {
       });
 
       alert(
-        `✅ Presença confirmada na turma "${turmaAtual.titulo}" a ${distanciaStudio}m do Studio!`
+        `✅ Presença confirmada em "${atividadeAtual.titulo}" a ${distanciaAlvo}m do local!`
       );
       carregarDadosBolsista();
     } catch (err) {
@@ -472,7 +522,6 @@ export default function PainelBolsista() {
     }
   };
 
-  // Indicadores calculados
   const vigencia = calcularVigenciaBolsa(
     userData?.dataEntradaBolsa,
     userData?.vigenciaBolsaMeses,
@@ -509,7 +558,7 @@ export default function PainelBolsista() {
   const abas = [
     { id: 'visao_geral', label: 'Minha Bolsa & Check-in', icon: Award },
     { id: 'desempenho', label: 'Minhas Avaliações', icon: TrendingUp },
-    { id: 'turmas_perfil', label: 'Turmas & Conta', icon: BookOpen },
+    { id: 'turmas_perfil', label: 'Agenda & Conta', icon: BookOpen },
   ];
 
   return (
@@ -586,7 +635,6 @@ export default function PainelBolsista() {
           </div>
         ) : abaAtiva === 'visao_geral' ? (
           <div className="space-y-6">
-            {/* Cards Superiores */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm space-y-2.5">
                 <span className="text-[11px] font-bold uppercase text-cyan-800 flex items-center gap-1.5">
@@ -650,7 +698,6 @@ export default function PainelBolsista() {
               </div>
             </div>
 
-            {/* Grid: Check-in Geolocalizado + Histórico */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
                 <div className="flex items-center justify-between">
@@ -667,7 +714,6 @@ export default function PainelBolsista() {
                   </button>
                 </div>
 
-                {/* Status da Cerca Virtual (Estr. das Placas, 1909) */}
                 <div
                   className={`p-3 rounded-xl border text-xs space-y-1 ${
                     noLocalCorreto
@@ -682,33 +728,32 @@ export default function PainelBolsista() {
                       : erroGps
                       ? erroGps
                       : noLocalCorreto
-                      ? `No Studio No Compasso (${distanciaStudio}m do salão)`
-                      : `Fora do Studio (${distanciaStudio ?? '?'}m de distância)`}
+                      ? `No local autorizado (${distanciaAlvo}m)`
+                      : `Fora do local (${distanciaAlvo ?? '?'}m de distância)`}
                   </p>
                   <p className="text-[11px] opacity-85">
-                    Local exigido: Estr. das Placas, 1909 - Raimundo Melo (até {RAIO_MAXIMO_METROS}m).
+                    Local exigido: <strong>{atividadeAtual?.localNome || 'Studio No Compasso'}</strong> (até {RAIO_MAXIMO_METROS}m).
                   </p>
                 </div>
 
                 <form onSubmit={handleRegistrarPresenca} className="space-y-3">
                   <div>
                     <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      Turma Cadastrada
+                      Turma ou Evento Escalado
                     </label>
                     <select
-                      value={turmaSelecionadaId}
-                      onChange={(e) => setTurmaSelecionadaId(e.target.value)}
+                      value={atividadeSelecionadaKey}
+                      onChange={(e) => setAtividadeSelecionadaKey(e.target.value)}
                       className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold"
                     >
-                      {minhasTurmas.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.titulo} ({t.dataInfo} • {t.horaInicio} às {t.horarioFim})
+                      {atividadesDisponiveis.map((a) => (
+                        <option key={a.key} value={a.key}>
+                          {a.titulo} ({a.subtitulo})
                         </option>
                       ))}
                     </select>
                   </div>
 
-                  {/* Status da Janela de Horário */}
                   <div
                     className={`p-3 rounded-xl border text-xs ${
                       avaliacaoJanela.liberado
@@ -721,19 +766,18 @@ export default function PainelBolsista() {
                     </p>
                   </div>
 
-                  {/* Alerta de Trava por Aparelho */}
                   {aparelhoJaUsadoNestaAtividade && (
                     <div className="p-3 rounded-xl bg-red-50 border border-red-300 text-xs text-red-800 font-bold flex items-start gap-2">
                       <AlertTriangle size={16} className="shrink-0 mt-0.5" />
                       <span>
-                        Este celular já registrou uma presença para esta turma hoje. Não é permitido registrar mais de uma pessoa no mesmo aparelho.
+                        Este celular já registrou uma presença para esta atividade hoje. Não é permitido registrar mais de uma pessoa no mesmo aparelho.
                       </span>
                     </div>
                   )}
 
                   {bolsistaJaMarcouNestaAtividade && !aparelhoJaUsadoNestaAtividade && (
                     <div className="p-3 rounded-xl bg-emerald-100 border border-emerald-300 text-xs text-emerald-900 font-bold">
-                      ✅ Você já registrou sua presença nesta turma hoje!
+                      ✅ Você já registrou sua presença nesta atividade hoje!
                     </div>
                   )}
 
@@ -882,25 +926,27 @@ export default function PainelBolsista() {
 
             <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
               <h3 className="text-base font-bold uppercase font-condensed text-[#4A041C] flex items-center gap-2">
-                <Calendar size={18} className="text-[#D81B60]" /> Minhas Turmas Vinculadas ({minhasTurmas.length})
+                <Calendar size={18} className="text-[#D81B60]" /> Minha Agenda de Turmas & Eventos ({atividadesDisponiveis.length})
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {minhasTurmas.map((c) => (
+                {atividadesDisponiveis.map((c) => (
                   <div
-                    key={c.id}
+                    key={c.key}
                     className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-1"
                   >
-                    <span className="px-2 py-0.5 rounded bg-[#4A041C] text-white text-[10px] font-bold uppercase">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        c.categoria === 'evento'
+                          ? 'bg-amber-200 text-amber-950'
+                          : 'bg-[#4A041C] text-white'
+                      }`}
+                    >
                       {c.frente || 'Dança de Salão'}
                     </span>
                     <h4 className="font-bold text-zinc-900 text-sm pt-1">{c.titulo}</h4>
-                    <p className="text-xs text-zinc-600">
-                      {c.estilo} • Prof: <strong>{c.professoresNomes}</strong>
-                    </p>
-                    <p className="text-xs text-zinc-500">
-                      🕒 {c.dataInfo} ({c.horaInicio} às {c.horarioFim})
-                    </p>
+                    <p className="text-xs text-zinc-600">{c.subtitulo}</p>
+                    <p className="text-[11px] text-zinc-500">📍 {c.localNome}</p>
                   </div>
                 ))}
               </div>
