@@ -24,10 +24,11 @@ import {
   Lock,
   Eye,
   EyeOff,
+  Mail,
 } from 'lucide-react';
 import { db } from './firebase';
 
-const TEXTO_EDITAL_PADRAO = `O Studio de Dança No Compasso torna público o Edital nº 02/2026, que abre o processo seletivo para a concessão de bolsas de estudo integrais (100%) na modalidade de Dança de Salão. A bolsa terá duração de 6 meses, compreendendo o período de 11 de janeiro de 2027 a 11 de julho de 2027.
+export const TEXTO_EDITAL_PADRAO = `O Studio de Dança No Compasso torna público o Edital nº 02/2026, que abre o processo seletivo para a concessão de bolsas de estudo integrais (100%) na modalidade de Dança de Salão. A bolsa terá duração de 6 meses, compreendendo o período de 11 de janeiro de 2027 a 11 de julho de 2027.
 
 Objetivo da Bolsa e Atividades Obrigatórias
 O programa de bolsistas tem como propósito integrar os selecionados em duas atividades fundamentais e indissociáveis do nosso Studio:
@@ -48,6 +49,75 @@ A concessão da bolsa estará condicionada à participação do candidato em uma
 
 Declaração de Ciência
 Ciente de todos os critérios estabelecidos no Edital nº 02/2026, solicitamos que preencha o formulário a seguir com a máxima atenção e veracidade. A constatação de incoerência entre os dados informados no formulário e a real disponibilidade ou padrão de participação acarretará a exclusão do candidato no processo seletivo e/ou a perda imediata da bolsa após a concessão.`;
+
+export const PERGUNTAS_PADRAO_EDITAL = [
+  {
+    id: 'conhecimentoPrevio',
+    enunciado: 'Nível de Conhecimento Prévio em Dança',
+    tipo: 'select',
+    obrigatoria: true,
+    opcoes: [
+      'Iniciante (nunca fiz aulas)',
+      'Básico (já fiz algumas aulas ou bailes)',
+      'Intermediário (danço vários ritmos)',
+      'Avançado / Já atuei como monitor(a) ou bailarino(a)',
+    ],
+  },
+  {
+    id: 'experienciaSalao',
+    enunciado: 'Conte sobre sua experiência com Dança de Salão (ou outras danças)',
+    tipo: 'textarea',
+    obrigatoria: true,
+    ocultarSeIniciante: true,
+    placeholder: 'Quais ritmos já dançou, há quanto tempo, se já participou de apresentações...',
+  },
+  {
+    id: 'conheceStudio',
+    enunciado: 'Já conhece o Studio No Compasso?',
+    tipo: 'select',
+    obrigatoria: true,
+    opcoes: [
+      'Não, será meu primeiro contato',
+      'Conheço pelas redes sociais / eventos',
+      'Sim, já fui aluno(a) do Studio',
+      'Sim, sou aluno(a) atual do Studio',
+    ],
+  },
+  {
+    id: 'comoSoube',
+    enunciado: 'Como ficou sabendo do Edital de Bolsas?',
+    tipo: 'select',
+    obrigatoria: true,
+    opcoes: [
+      'Instagram (@nocompasso.acre)',
+      'Indicação de amigo(a) / aluno(a) / bolsista',
+      'Grupos de WhatsApp',
+      'Eventos / Mostras do Studio',
+      'Outro',
+    ],
+  },
+  {
+    id: 'motivacaoStudio',
+    enunciado: 'Por que você deseja ser bolsista do Studio No Compasso?',
+    tipo: 'textarea',
+    obrigatoria: true,
+    placeholder: 'Conte seu interesse em participar do estúdio e da Mostra de Dança...',
+  },
+  {
+    id: 'comoPodeColaborar',
+    enunciado: 'Em que você acredita que pode colaborar com o Studio e com os colegas?',
+    tipo: 'textarea',
+    obrigatoria: true,
+    placeholder: 'Ex: organização, pontualidade, acolhimento aos alunos iniciantes, redes sociais, dedicação aos ensaios...',
+  },
+  {
+    id: 'observacoesExtras',
+    enunciado: 'Alguma restrição física, lesão ou observação importante? (Opcional)',
+    tipo: 'text',
+    obrigatoria: false,
+    placeholder: 'Se não houver, deixe em branco',
+  },
+];
 
 const ESTILOS_DANCA = [
   'Forró',
@@ -126,9 +196,9 @@ export default function InscricaoBolsaPublica() {
   const { editalId } = useParams();
   const navigate = useNavigate();
 
-  const [statusEdital, setStatusEdital] = useState('carregando'); // carregando | aberto | encerrado | invalido
+  const [statusEdital, setStatusEdital] = useState('carregando');
   const [edital, setEdital] = useState(null);
-  const [etapa, setEtapa] = useState(1); // 1, 2, 3, 4, 5 (comprovante)
+  const [etapa, setEtapa] = useState(1);
 
   // SEÇÃO 1: Termos de ciência do Edital
   const [aceiteLeituraEdital, setAceiteLeituraEdital] = useState(false);
@@ -147,19 +217,14 @@ export default function InscricaoBolsaPublica() {
   const [nomeResponsavelLegal, setNomeResponsavelLegal] = useState('');
   const [telefoneResponsavelLegal, setTelefoneResponsavelLegal] = useState('');
 
-  // SEÇÃO 3: Dados de Dança & Disponibilidade
-  const [conhecimentoPrevio, setConhecimentoPrevio] = useState('Iniciante (nunca fiz aulas)');
-  const [experienciaSalao, setExperienciaSalao] = useState('');
-  const [conheceStudio, setConheceStudio] = useState('Não, será meu primeiro contato');
-  const [comoSoube, setComoSoube] = useState('Instagram (@nocompasso.acre)');
+  // SEÇÃO 3: Respostas dinâmicas & Disponibilidade
+  const [respostasPerguntas, setRespostasPerguntas] = useState({});
+  const [outrosEspecificar, setOutrosEspecificar] = useState({});
   const [disponibilidadeSabado, setDisponibilidadeSabado] = useState(true);
   const [diasUteisDisponiveis, setDiasUteisDisponiveis] = useState([]);
   const [estilosInteresse, setEstilosInteresse] = useState(['Forró']);
-  const [motivacaoStudio, setMotivacaoStudio] = useState('');
-  const [comoPodeColaborar, setComoPodeColaborar] = useState('');
-  const [observacoesExtras, setObservacoesExtras] = useState('');
 
-  // SEÇÃO 4: Confirmações & Senha para acesso caso aprovado
+  // SEÇÃO 4: Confirmações & Credencial (ativada apenas se aprovado)
   const [autorizacaoUsoImagem, setAutorizacaoUsoImagem] = useState(false);
   const [cienciaDivergenciaEliminacao, setCienciaDivergenciaEliminacao] = useState(false);
   const [cienciaFaltaEliminacao, setCienciaFaltaEliminacao] = useState(false);
@@ -170,6 +235,7 @@ export default function InscricaoBolsaPublica() {
   const [enviando, setEnviando] = useState(false);
   const [erroEtapa, setErroEtapa] = useState('');
   const [protocoloGerado, setProtocoloGerado] = useState('');
+  const [emailComprovanteEnviado, setEmailComprovanteEnviado] = useState(false);
 
   useEffect(() => {
     const carregarEdital = async () => {
@@ -185,6 +251,21 @@ export default function InscricaoBolsaPublica() {
         }
         const dados = { id: snap.id, ...snap.data() };
         setEdital(dados);
+
+        const listaPergs =
+          Array.isArray(dados.perguntas) && dados.perguntas.length > 0
+            ? dados.perguntas
+            : PERGUNTAS_PADRAO_EDITAL;
+
+        const iniciais = {};
+        listaPergs.forEach((p) => {
+          if (p.tipo === 'select' && Array.isArray(p.opcoes) && p.opcoes.length > 0) {
+            iniciais[p.id] = p.opcoes[0];
+          } else {
+            iniciais[p.id] = '';
+          }
+        });
+        setRespostasPerguntas(iniciais);
         setStatusEdital(dados.status === 'encerrado' ? 'encerrado' : 'aberto');
       } catch (err) {
         console.error('Erro ao carregar edital:', err);
@@ -193,6 +274,16 @@ export default function InscricaoBolsaPublica() {
     };
     carregarEdital();
   }, [editalId]);
+
+  const perguntasAtivas =
+    Array.isArray(edital?.perguntas) && edital.perguntas.length > 0
+      ? edital.perguntas
+      : PERGUNTAS_PADRAO_EDITAL;
+
+  const nivelAtual = String(respostasPerguntas.conhecimentoPrevio || '');
+  const isInicianteSemContato =
+    nivelAtual.toLowerCase().includes('iniciante') ||
+    nivelAtual.toLowerCase().includes('nunca fiz');
 
   const idadeCalculada = calcularIdade(dataNascimento);
   const isMenorDe15 = idadeCalculada !== null && idadeCalculada < 15;
@@ -245,6 +336,22 @@ export default function InscricaoBolsaPublica() {
     e.preventDefault();
     setErroEtapa('');
 
+    for (const p of perguntasAtivas) {
+      if (p.ocultarSeIniciante && isInicianteSemContato) continue;
+      const val = (respostasPerguntas[p.id] || '').trim();
+      if (p.obrigatoria && !val) {
+        setErroEtapa(`Por favor, responda a pergunta: "${p.enunciado}"`);
+        return;
+      }
+      if (val.toLowerCase().startsWith('outro')) {
+        const esp = (outrosEspecificar[p.id] || '').trim();
+        if (!esp) {
+          setErroEtapa(`Por favor, especifique a opção "Outro" em: "${p.enunciado}"`);
+          return;
+        }
+      }
+    }
+
     if (!disponibilidadeSabado) {
       setErroEtapa('A disponibilidade aos sábados (15h às 20h) é pré-requisito obrigatório do edital.');
       return;
@@ -262,6 +369,58 @@ export default function InscricaoBolsaPublica() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const dispararEmailComprovante = async (dadosComprovante) => {
+    const assunto = `Comprovante de Inscrição (${dadosComprovante.protocolo}) — ${dadosComprovante.editalTitulo}`;
+    const corpoTexto = `Olá, ${dadosComprovante.nome}!
+
+Sua inscrição no processo seletivo "${dadosComprovante.editalTitulo}" do Studio de Dança No Compasso foi confirmada!
+
+Protocolo: ${dadosComprovante.protocolo}
+Candidato(a): ${dadosComprovante.nome}
+CPF: ${dadosComprovante.cpf}
+Dias disponíveis: Sábado (15h às 20h) + ${dadosComprovante.diasUteisDisponiveis.join(', ')}
+
+ATENÇÃO OBRIGATÓRIA — AVALIAÇÃO PRESENCIAL:
+Data e Horário: ${dadosComprovante.dataAvaliacaoPresencial}
+Local: Studio de Dança No Compasso (Estrada das Placas, 1909 — Rio Branco/AC).
+Lembrete: O não comparecimento elimina automaticamente o candidato do processo seletivo.
+
+Obs.: Seu usuário (${dadosComprovante.email}) e senha cadastrados ficarão reservados e serão habilitados somente após a aprovação pela banca avaliadora.
+
+Atenciosamente,
+Direção — Studio de Dança No Compasso
+WhatsApp: (68) 99981-6141 | Instagram: @nocompasso.acre`;
+
+    try {
+      // 1. Registra na coleção de comunicados do sistema
+      await addDoc(collection(db, 'comunicados_email'), {
+        tipo: 'comprovante_bolsa',
+        destinatarioEmail: dadosComprovante.email,
+        destinatarioNome: dadosComprovante.nome,
+        protocolo: dadosComprovante.protocolo,
+        assunto,
+        mensagem: corpoTexto,
+        statusEnvio: 'enviado',
+        criadoEm: new Date().toISOString(),
+      });
+
+      // 2. Tenta disparar via rota serverless /api/enviar-email caso configurada na Vercel
+      await fetch('/api/enviar-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: dadosComprovante.email,
+          subject: assunto,
+          text: corpoTexto,
+        }),
+      }).catch(() => {});
+
+      setEmailComprovanteEnviado(true);
+    } catch (e) {
+      console.warn('Aviso ao registrar e-mail de comprovante:', e);
+    }
+  };
+
   const handleFinalizarInscricao = async (e) => {
     e.preventDefault();
     setErroEtapa('');
@@ -271,7 +430,7 @@ export default function InscricaoBolsaPublica() {
       return;
     }
     if (senhaAcesso.length < 6) {
-      setErroEtapa('Crie uma senha com pelo menos 6 caracteres (ela será usada no portal caso você seja aprovado).');
+      setErroEtapa('Crie uma senha com pelo menos 6 caracteres (ela ficará reservada e só será habilitada se você for aprovado).');
       return;
     }
     if (senhaAcesso !== confirmarSenhaAcesso) {
@@ -282,15 +441,47 @@ export default function InscricaoBolsaPublica() {
     setEnviando(true);
     try {
       const protocolo = `BOLSA-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+      const dataAvaliacaoTexto =
+        edital?.dataAvaliacao || '09 de janeiro de 2027 (sábado), das 14h às 16h';
 
-      await addDoc(collection(db, 'solicitacoes_bolsa'), {
+      // Monta respostas consolidadas (incluindo especificação quando for "Outro")
+      const respostasConsolidadas = {};
+      const perguntasDetalhadas = [];
+
+      perguntasAtivas.forEach((p) => {
+        if (p.ocultarSeIniciante && isInicianteSemContato) {
+          respostasConsolidadas[p.id] = 'Não se aplica (Iniciante sem contato prévio)';
+          perguntasDetalhadas.push({
+            id: p.id,
+            enunciado: p.enunciado,
+            resposta: 'Não se aplica (Iniciante sem contato prévio)',
+          });
+          return;
+        }
+
+        const bruto = (respostasPerguntas[p.id] || '').trim();
+        const esp = (outrosEspecificar[p.id] || '').trim();
+        const final =
+          bruto.toLowerCase().startsWith('outro') && esp
+            ? `${bruto}: ${esp}`
+            : bruto;
+
+        respostasConsolidadas[p.id] = final;
+        perguntasDetalhadas.push({
+          id: p.id,
+          enunciado: p.enunciado,
+          resposta: final,
+        });
+      });
+
+      const payloadInscricao = {
         protocolo,
         editalId: edital.id,
-        editalTitulo: edital.titulo || 'Edital nº 02/2026 - Bolsas Dança de Salão',
+        editalTitulo: edital.titulo || 'Edital nº 02/2026 — Bolsas Dança de Salão',
         dataInicioBolsaPrevista: edital.dataInicioBolsa || '2027-01-11',
         dataFimBolsaPrevista: edital.dataFimBolsa || '2027-07-11',
         vigenciaMeses: Number(edital.vigenciaMeses || 6),
-        dataAvaliacaoPresencial: edital.dataAvaliacao || '09 de janeiro de 2027 (sábado), das 14h às 16h',
+        dataAvaliacaoPresencial: dataAvaliacaoTexto,
 
         // Seção 2
         nome: nome.trim(),
@@ -306,27 +497,33 @@ export default function InscricaoBolsaPublica() {
         endereco: endereco.trim(),
         fotoPerfilUrl,
 
-        // Seção 3
-        conhecimentoPrevio,
-        experienciaSalao: experienciaSalao.trim(),
-        conheceStudio,
-        comoSoube,
+        // Seção 3 (compatível com campos antigos + perguntas customizadas)
+        conhecimentoPrevio: respostasConsolidadas.conhecimentoPrevio || '',
+        experienciaSalao: respostasConsolidadas.experienciaSalao || '',
+        conheceStudio: respostasConsolidadas.conheceStudio || '',
+        comoSoube: respostasConsolidadas.comoSoube || '',
+        motivacaoStudio: respostasConsolidadas.motivacaoStudio || '',
+        comoPodeColaborar: respostasConsolidadas.comoPodeColaborar || '',
+        observacoesExtras: respostasConsolidadas.observacoesExtras || '',
+        perguntasDetalhadas,
+
         disponibilidadeSabado,
         diasUteisDisponiveis,
         estilosInteresse,
-        motivacaoStudio: motivacaoStudio.trim(),
-        comoPodeColaborar: comoPodeColaborar.trim(),
-        observacoesExtras: observacoesExtras.trim(),
 
-        // Seção 4 & Credencial
+        // Seção 4 & Credencial (fica bloqueada até aprovação do Admin)
         autorizacaoUsoImagem: true,
         cienciaDivergenciaEliminacao: true,
         cienciaFaltaEliminacao: true,
         senhaInicialEscolhida: senhaAcesso,
+        acessoPortalHabilitado: false,
 
-        status: 'pendente', // pendente | aprovado | reprovado
+        status: 'pendente',
         dataInscricao: new Date().toISOString(),
-      });
+      };
+
+      await addDoc(collection(db, 'solicitacoes_bolsa'), payloadInscricao);
+      await dispararEmailComprovante(payloadInscricao);
 
       setProtocoloGerado(protocolo);
       setEtapa(5);
@@ -395,7 +592,6 @@ export default function InscricaoBolsaPublica() {
 
         {statusEdital === 'aberto' && (
           <div className="space-y-6">
-            {/* BARRA DE PROGRESSO DAS 4 SEÇÕES */}
             {etapa <= 4 && (
               <div className="bg-white p-4 rounded-2xl border border-zinc-200 shadow-xs">
                 <div className="grid grid-cols-4 gap-2 text-center">
@@ -434,7 +630,7 @@ export default function InscricaoBolsaPublica() {
             )}
 
             {/* =============================================================== */}
-            {/* SEÇÃO 1: TEXTO EXPLICATIVO DO EDITAL & ACEITE                   */}
+            {/* SEÇÃO 1: EDITAL & ACEITE                                        */}
             {/* =============================================================== */}
             {etapa === 1 && (
               <div className="bg-white p-6 sm:p-8 rounded-3xl border border-zinc-200 shadow-sm space-y-6">
@@ -475,7 +671,6 @@ export default function InscricaoBolsaPublica() {
                   </p>
                 </div>
 
-                {/* TERMOS DE CIÊNCIA OBRIGATÓRIOS */}
                 <div className="p-5 rounded-2xl bg-pink-50/70 border border-[#D81B60]/30 space-y-3">
                   <p className="text-xs font-bold uppercase text-[#4A041C]">
                     Confirmação de Leitura e Ciência:
@@ -489,7 +684,7 @@ export default function InscricaoBolsaPublica() {
                       className="mt-0.5 accent-[#D81B60]"
                     />
                     <span>
-                      Declaro que li integralmente o <strong>Edital nº 02/2026</strong> e estou ciente da duração da bolsa (6 meses) e da avaliação presencial obrigatória em <strong>{dataAvaliacaoTexto}</strong>.
+                      Declaro que li integralmente o <strong>Edital</strong> e estou ciente da duração da bolsa (6 meses) e da avaliação presencial obrigatória em <strong>{dataAvaliacaoTexto}</strong>.
                     </span>
                   </label>
 
@@ -529,7 +724,7 @@ export default function InscricaoBolsaPublica() {
             )}
 
             {/* =============================================================== */}
-            {/* SEÇÃO 2: DADOS PESSOAIS & FOTO DE PERFIL                        */}
+            {/* SEÇÃO 2: DADOS PESSOAIS & FOTO                                  */}
             {/* =============================================================== */}
             {etapa === 2 && (
               <form
@@ -545,7 +740,6 @@ export default function InscricaoBolsaPublica() {
                   </h2>
                 </div>
 
-                {/* UPLOAD DE FOTO DE PERFIL */}
                 <div className="flex flex-col sm:flex-row items-center gap-4 p-4 rounded-2xl bg-zinc-50 border border-zinc-200">
                   <div className="w-24 h-24 rounded-2xl bg-zinc-200 border-2 border-dashed border-zinc-400 flex items-center justify-center overflow-hidden shrink-0">
                     {fotoPerfilUrl ? (
@@ -685,7 +879,7 @@ export default function InscricaoBolsaPublica() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      E-mail *
+                      E-mail (Receberá o Comprovante) *
                     </label>
                     <input
                       type="email"
@@ -745,7 +939,7 @@ export default function InscricaoBolsaPublica() {
             )}
 
             {/* =============================================================== */}
-            {/* SEÇÃO 3: DADOS DE DANÇA & DISPONIBILIDADE                       */}
+            {/* SEÇÃO 3: PERGUNTAS DINÂMICAS & DISPONIBILIDADE                  */}
             {/* =============================================================== */}
             {etapa === 3 && (
               <form
@@ -761,69 +955,91 @@ export default function InscricaoBolsaPublica() {
                   </h2>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      Nível de Conhecimento Prévio *
-                    </label>
-                    <select
-                      value={conhecimentoPrevio}
-                      onChange={(e) => setConhecimentoPrevio(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold"
-                    >
-                      <option value="Iniciante (nunca fiz aulas)">Iniciante (nunca fiz aulas)</option>
-                      <option value="Básico (já fiz algumas aulas ou bailes)">Básico (já fiz algumas aulas/bailes)</option>
-                      <option value="Intermediário (danço vários ritmos)">Intermediário (danço vários ritmos)</option>
-                      <option value="Avançado / Já atuei como monitor ou bailarino">Avançado / Já atuei como monitor(a)</option>
-                    </select>
-                  </div>
+                {/* PERGUNTAS CONFIGURADAS NO EDITAL */}
+                <div className="space-y-4">
+                  {perguntasAtivas.map((p) => {
+                    // Se não tem contato prévio com dança, oculta/desabilita a caixa de experiência
+                    if (p.ocultarSeIniciante && isInicianteSemContato) {
+                      return null;
+                    }
 
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                      Já conhece o Studio No Compasso? *
-                    </label>
-                    <select
-                      value={conheceStudio}
-                      onChange={(e) => setConheceStudio(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold"
-                    >
-                      <option value="Não, será meu primeiro contato">Não, será meu primeiro contato</option>
-                      <option value="Conheço pelas redes sociais / eventos">Conheço pelas redes sociais / bailes</option>
-                      <option value="Sim, já fui aluno(a) do Studio">Sim, já fui aluno(a) do Studio</option>
-                      <option value="Sim, sou aluno(a) atual do Studio">Sim, sou aluno(a) atual do Studio</option>
-                    </select>
-                  </div>
-                </div>
+                    const valorAtual = respostasPerguntas[p.id] || '';
+                    const marcouOutro = valorAtual.toLowerCase().startsWith('outro');
 
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Conte sobre sua experiência com Dança de Salão (ou outras danças) *
-                  </label>
-                  <textarea
-                    rows="2"
-                    required
-                    placeholder="Quais ritmos já dançou, há quanto tempo, se já participou de apresentações..."
-                    value={experienciaSalao}
-                    onChange={(e) => setExperienciaSalao(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                  />
-                </div>
+                    return (
+                      <div key={p.id} className="space-y-2">
+                        <label className="block text-xs font-bold uppercase text-zinc-700">
+                          {p.enunciado} {p.obrigatoria ? '*' : ''}
+                        </label>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Como ficou sabendo do Edital de Bolsas? *
-                  </label>
-                  <select
-                    value={comoSoube}
-                    onChange={(e) => setComoSoube(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                  >
-                    <option value="Instagram (@nocompasso.acre)">Instagram (@nocompasso.acre)</option>
-                    <option value="Indicação de amigo(a) / aluno(a) / bolsista">Indicação de amigo(a) / aluno(a) / bolsista</option>
-                    <option value="Grupos de WhatsApp">Grupos de WhatsApp</option>
-                    <option value="Eventos / Mostras do Studio">Eventos / Mostras do Studio</option>
-                    <option value="Outro meio">Outro meio</option>
-                  </select>
+                        {p.tipo === 'select' ? (
+                          <select
+                            required={p.obrigatoria}
+                            value={valorAtual}
+                            onChange={(e) =>
+                              setRespostasPerguntas((prev) => ({
+                                ...prev,
+                                [p.id]: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm font-semibold"
+                          >
+                            {(p.opcoes || []).map((op) => (
+                              <option key={op} value={op}>
+                                {op}
+                              </option>
+                            ))}
+                          </select>
+                        ) : p.tipo === 'textarea' ? (
+                          <textarea
+                            rows="2"
+                            required={p.obrigatoria}
+                            placeholder={p.placeholder || 'Digite sua resposta...'}
+                            value={valorAtual}
+                            onChange={(e) =>
+                              setRespostasPerguntas((prev) => ({
+                                ...prev,
+                                [p.id]: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            required={p.obrigatoria}
+                            placeholder={p.placeholder || 'Digite sua resposta...'}
+                            value={valorAtual}
+                            onChange={(e) =>
+                              setRespostasPerguntas((prev) => ({
+                                ...prev,
+                                [p.id]: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                          />
+                        )}
+
+                        {marcouOutro && (
+                          <div className="pl-3 border-l-2 border-[#D81B60]">
+                            <input
+                              type="text"
+                              required
+                              placeholder="Especifique aqui..."
+                              value={outrosEspecificar[p.id] || ''}
+                              onChange={(e) =>
+                                setOutrosEspecificar((prev) => ({
+                                  ...prev,
+                                  [p.id]: e.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-[#D81B60]/50 bg-pink-50/40 p-2.5 text-sm"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* DISPONIBILIDADE DE HORÁRIOS */}
@@ -894,47 +1110,6 @@ export default function InscricaoBolsaPublica() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Por que você deseja ser bolsista do Studio No Compasso? *
-                  </label>
-                  <textarea
-                    rows="2"
-                    required
-                    placeholder="Conte seu interesse em participar do estúdio e da Mostra de Dança..."
-                    value={motivacaoStudio}
-                    onChange={(e) => setMotivacaoStudio(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Em que você acredita que pode colaborar com o Studio e com os colegas? *
-                  </label>
-                  <textarea
-                    rows="2"
-                    required
-                    placeholder="Ex: organização, pontualidade, acolhimento aos alunos iniciantes, redes sociais, dedicação aos ensaios..."
-                    value={comoPodeColaborar}
-                    onChange={(e) => setComoPodeColaborar(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
-                    Alguma restrição física, lesão ou observação importante? (Opcional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Se não houver, deixe em branco"
-                    value={observacoesExtras}
-                    onChange={(e) => setObservacoesExtras(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                  />
-                </div>
-
                 <div className="flex gap-3 pt-2">
                   <button
                     type="button"
@@ -954,7 +1129,7 @@ export default function InscricaoBolsaPublica() {
             )}
 
             {/* =============================================================== */}
-            {/* SEÇÃO 4: CONFIRMAÇÕES NECESSÁRIAS & SENHA                       */}
+            {/* SEÇÃO 4: CONFIRMAÇÕES NECESSÁRIAS & RESERVA DE SENHA            */}
             {/* =============================================================== */}
             {etapa === 4 && (
               <form
@@ -1012,13 +1187,13 @@ export default function InscricaoBolsaPublica() {
                   </label>
                 </div>
 
-                {/* SENHA PARA O PORTAL CASO SEJA APROVADO */}
-                <div className="p-4 rounded-2xl bg-pink-50/60 border border-[#D81B60]/30 space-y-3">
-                  <p className="text-xs font-bold uppercase text-[#4A041C]">
-                    Crie sua Senha de Acesso ao Portal do Bolsista
+                {/* CADASTRO DE USUÁRIO & SENHA (HABILITADO SOMENTE APÓS APROVAÇÃO) */}
+                <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-300 space-y-3">
+                  <p className="text-xs font-bold uppercase text-[#4A041C] flex items-center gap-1.5">
+                    <Lock size={14} className="text-[#D81B60]" /> Crie seu Usuário e Senha (Acesso Restrito)
                   </p>
-                  <p className="text-[11px] text-zinc-600">
-                    Caso você seja aprovado(a) pela coordenação, este e-mail (<strong>{email}</strong>) e a senha abaixo já liberarão seu acesso ao portal.
+                  <p className="text-[11px] text-zinc-700 leading-relaxed">
+                    Seu usuário será o e-mail <strong>{email}</strong>. <strong>Atenção:</strong> enquanto sua inscrição estiver em análise, o acesso ao Portal do Bolsista permanece <strong>bloqueado</strong> e só será habilitado caso você seja aprovado(a) pela banca.
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1068,7 +1243,7 @@ export default function InscricaoBolsaPublica() {
                     disabled={enviando}
                     className="flex-1 rounded-xl bg-gradient-to-r from-[#4A041C] to-[#D81B60] py-3.5 text-xs font-bold uppercase tracking-wider text-white hover:brightness-110 transition shadow-md"
                   >
-                    {enviando ? 'Enviando Inscrição...' : 'Confirmar Inscrição & Gerar Comprovante'}
+                    {enviando ? 'Enviando Inscrição...' : 'Confirmar Inscrição & Enviar Comprovante'}
                   </button>
                 </div>
               </form>
@@ -1092,6 +1267,11 @@ export default function InscricaoBolsaPublica() {
                   <p className="text-xs font-mono font-bold text-zinc-600">
                     Protocolo: <span className="text-[#D81B60] text-sm">{protocoloGerado}</span>
                   </p>
+                  {emailComprovanteEnviado && (
+                    <p className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                      <Mail size={14} /> Comprovante enviado para {email}
+                    </p>
+                  )}
                 </div>
 
                 {/* AVISO PISCANDO LEMBRANDO DA DATA DO ENCONTRO DE SELEÇÃO */}
@@ -1110,7 +1290,6 @@ export default function InscricaoBolsaPublica() {
                   </p>
                 </div>
 
-                {/* RESUMO DOS DADOS DO CANDIDATO */}
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 p-4 rounded-2xl bg-zinc-50 border border-zinc-200 text-xs">
                   {fotoPerfilUrl && (
                     <img
@@ -1139,8 +1318,10 @@ export default function InscricaoBolsaPublica() {
                       {diasUteisDisponiveis.join(', ')}
                     </p>
                     <p>
-                      <strong className="text-zinc-500 uppercase">Edital:</strong>{' '}
-                      {edital?.titulo || 'Edital nº 02/2026'}
+                      <strong className="text-zinc-500 uppercase">Status do Acesso:</strong>{' '}
+                      <span className="font-bold text-amber-700">
+                        Aguardando aprovação presencial (será habilitado após aprovação)
+                      </span>
                     </p>
                   </div>
                 </div>
