@@ -47,7 +47,7 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
     '09 de janeiro de 2027 (sábado), das 14h às 16h'
   );
   const [dataInicioBolsa, setDataInicioBolsa] = useState('2027-01-11');
-  const [vigenciaMeses, setVigenciaMeses] = useState('6');
+  const [vigenciaMeses, setVigenciaMeses] = useState('12');
   const [textoEdital, setTextoEdital] = useState(TEXTO_EDITAL_PADRAO);
 
   // Construtor / Editor de perguntas antes de publicar o edital
@@ -149,11 +149,12 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
       return;
     }
 
-    const fimObj = new Date(dataInicioBolsa + 'T00:00:00');
-    fimObj.setMonth(fimObj.getMonth() + Number(vigenciaMeses || 6));
-    const dataFimIso = !isNaN(fimObj.getTime())
-      ? fimObj.toISOString().split('T')[0]
-      : '2027-07-11';
+    const mesesConfigurados = Number(vigenciaMeses || 12);
+const fimObj = new Date(dataInicioBolsa + 'T00:00:00');
+fimObj.setMonth(fimObj.getMonth() + mesesConfigurados);
+const dataFimIso = !isNaN(fimObj.getTime())
+  ? fimObj.toISOString().split('T')[0]
+  : '2028-01-11';
 
     try {
       await addDoc(collection(db, 'editais_bolsa'), {
@@ -482,8 +483,13 @@ Direção — Studio de Dança No Compasso`;
       }
 
       const dataEntrada = sol.dataInicioBolsaPrevista || '2027-01-11';
-      const meses = Number(sol.vigenciaMeses || 6);
-      const dataFim = sol.dataFimBolsaPrevista || '2027-07-11';
+const meses = Number(sol.vigenciaMeses || 12);
+let dataFim = sol.dataFimBolsaPrevista;
+if (!dataFim) {
+  const d = new Date(dataEntrada + 'T00:00:00');
+  d.setMonth(d.getMonth() + meses);
+  dataFim = d.toISOString().split('T')[0];
+}
 
       const docId = uidCriado || `bolsista_${Date.now()}`;
       await setDoc(doc(db, 'users', docId), {
