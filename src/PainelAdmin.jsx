@@ -270,11 +270,11 @@ export default function PainelAdmin() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex gap-2 overflow-x-auto pb-3 pt-1">
           {abas.map((tab) => {
             const Icone = tab.icon;
-            const ativa =  === tab.id;
+            const ativa = abaAtiva === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => set(tab.id)}
+                onClick={() => setAbaAtiva(tab.id)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider whitespace-nowrap transition ${
                   ativa
                     ? 'bg-[#4A041C] text-white shadow-sm'
