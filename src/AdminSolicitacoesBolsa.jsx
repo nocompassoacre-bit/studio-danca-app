@@ -27,6 +27,7 @@ import {
   Search,
   Lock,
   Unlock,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
@@ -247,6 +248,97 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
       ? `Olá, *${sol.nome}*! Parabéns! 🎉 Você foi *APROVADO(A)* no processo seletivo de Bolsistas do *Studio de Dança No Compasso* (${sol.editalTitulo})! Seu acesso ao portal já está ativo com seu e-mail cadastrado.`
       : `Olá, *${sol.nome}*! Aqui é da direção do *Studio de Dança No Compasso* referente à sua inscrição (${sol.protocolo}) no ${sol.editalTitulo}.`;
     window.open(`https://wa.me/${fone}?text=${encodeURIComponent(texto)}`, '_blank');
+  };
+
+  const exportarPlanilhaSolicitacoes = () => {
+    if (solicitacoes.length === 0) {
+      alert('Ainda não há inscrições registradas para exportar.');
+      return;
+    }
+
+    const cabecalho = [
+      'Protocolo',
+      'Status',
+      'Data Inscrição',
+      'Edital',
+      'Nome Completo',
+      'CPF',
+      'Data Nascimento',
+      'Idade',
+      'Menor de 18?',
+      'Responsável Legal',
+      'Tel. Responsável',
+      'WhatsApp',
+      'E-mail',
+      'Instagram',
+      'Endereço',
+      'Conhecimento Prévio',
+      'Conhece o Studio',
+      'Como Soube',
+      'Experiência em Dança',
+      'Dias Úteis Disponíveis',
+      'Estilos de Interesse',
+      'Motivação',
+      'Como Pode Colaborar',
+      'Observações Extras',
+      'Avaliado Por',
+      'Motivo / Resultado',
+    ];
+
+    const escaparCsv = (valor) => {
+      const texto = String(valor ?? '')
+        .replace(/\r?\n|\r/g, ' ')
+        .replace(/"/g, '""');
+      return `"${texto}"`;
+    };
+
+    const linhas = solicitacoes.map((s) =>
+      [
+        s.protocolo,
+        s.status === 'aprovado'
+          ? 'APROVADO (BOLSISTA)'
+          : s.status === 'reprovado'
+          ? 'ELIMINADO'
+          : 'PENDENTE',
+        s.dataInscricao ? new Date(s.dataInscricao).toLocaleString('pt-BR') : '',
+        s.editalTitulo,
+        s.nome,
+        s.cpf,
+        s.dataNascimento ? s.dataNascimento.split('-').reverse().join('/') : '',
+        s.idadeInscricao,
+        s.isMenorDe18 ? 'Sim' : 'Não',
+        s.nomeResponsavelLegal,
+        s.telefoneResponsavelLegal,
+        s.telefone,
+        s.email,
+        s.instagram,
+        s.endereco,
+        s.conhecimentoPrevio,
+        s.conheceStudio,
+        s.comoSoube,
+        s.experienciaSalao,
+        Array.isArray(s.diasUteisDisponiveis) ? s.diasUteisDisponiveis.join(' | ') : '',
+        Array.isArray(s.estilosInteresse) ? s.estilosInteresse.join(' | ') : '',
+        s.motivacaoStudio,
+        s.comoPodeColaborar,
+        s.observacoesExtras,
+        s.avaliadoPor || '',
+        s.motivoResultado || '',
+      ]
+        .map(escaparCsv)
+        .join(';')
+    );
+
+    const conteudoCsv = '\uFEFF' + [cabecalho.map(escaparCsv).join(';'), ...linhas].join('\n');
+    const blob = new Blob([conteudoCsv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `inscricoes-bolsistas-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const pendentes = solicitacoes.filter(
