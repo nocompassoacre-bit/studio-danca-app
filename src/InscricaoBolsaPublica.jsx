@@ -28,14 +28,14 @@ import {
 } from 'lucide-react';
 import { db } from './firebase';
 
-export const TEXTO_EDITAL_PADRAO = `O Studio de Dança No Compasso torna público o Edital nº 02/2026, que abre o processo seletivo para a concessão de bolsas de estudo integrais (100%) na modalidade de Dança de Salão. A bolsa terá duração de 6 meses, compreendendo o período de 11 de janeiro de 2027 a 11 de julho de 2027.
+export const TEXTO_EDITAL_PADRAO = `O Studio de Dança No Compasso torna público o Edital nº 01/2027, que abre o processo seletivo para a concessão de bolsas de estudo integrais (100%) na modalidade de Dança de Salão. A bolsa terá duração de 12 meses, compreendendo o período de 11 de janeiro de 2027 a 11 de julho de 2027.
 
 Objetivo da Bolsa e Atividades Obrigatórias
 O programa de bolsistas tem como propósito integrar os selecionados em duas atividades fundamentais e indissociáveis do nosso Studio:
 1. Auxílio nas turmas regulares de Dança de Salão.
-2. Composição do elenco da Mostra de Dança do Studio.
+2. Composição do elenco para apresentações.
 
-Atenção: A participação em ambas as frentes é estritamente obrigatória. Não é possível optar por atuar apenas no auxílio às turmas ou apenas na apresentação. Além disso, os ensaios para a Mostra já terão início na semana imediatamente seguinte ao encontro presencial com os aprovados. A inscrição e a futura assinatura do termo implicam a concordância e o aceite total destas condições.
+Atenção: A participação em ambas as frentes é estritamente obrigatória. Não é possível optar por atuar apenas no auxílio às turmas ou apenas na apresentação. Além disso, os ensaios para as apresentações terão inicio a qualquer tempo a depender da necessidade do studio. A inscrição e a futura assinatura do termo implicam a concordância e o aceite total destas condições.
 
 Pré-requisitos para Participação
 Para validar sua inscrição e concorrer à bolsa, o candidato deve obrigatoriamente:
@@ -48,7 +48,7 @@ Etapa de Avaliação Presencial
 A concessão da bolsa estará condicionada à participação do candidato em uma avaliação interativa, que ocorrerá presencialmente no dia 09 de janeiro de 2027 (sábado), das 14h às 16h.
 
 Declaração de Ciência
-Ciente de todos os critérios estabelecidos no Edital nº 02/2026, solicitamos que preencha o formulário a seguir com a máxima atenção e veracidade. A constatação de incoerência entre os dados informados no formulário e a real disponibilidade ou padrão de participação acarretará a exclusão do candidato no processo seletivo e/ou a perda imediata da bolsa após a concessão.`;
+Ciente de todos os critérios estabelecidos no Edital nº 01/2027, solicitamos que preencha o formulário a seguir com a máxima atenção e veracidade. A constatação de incoerência entre os dados informados no formulário e a real disponibilidade ou padrão de participação acarretará a exclusão do candidato no processo seletivo e/ou a perda imediata da bolsa após a concessão.`;
 
 export const PERGUNTAS_PADRAO_EDITAL = [
   {
@@ -123,7 +123,7 @@ const ESTILOS_DANCA = [
   'Forró',
   'Bolero',
   'Samba de Gafieira',
-  'Zouk',
+  'Westcoast Swing',
   'Bachata',
   'Salsa',
   'Rock Soltinho',
@@ -477,10 +477,10 @@ WhatsApp: (68) 99981-6141 | Instagram: @nocompasso.acre`;
       const payloadInscricao = {
         protocolo,
         editalId: edital.id,
-        editalTitulo: edital.titulo || 'Edital nº 02/2026 — Bolsas Dança de Salão',
+        editalTitulo: edital.titulo || 'Edital nº 01/2027 — Bolsas Dança de Salão',
         dataInicioBolsaPrevista: edital.dataInicioBolsa || '2027-01-11',
         dataFimBolsaPrevista: edital.dataFimBolsa || '2027-07-11',
-        vigenciaMeses: Number(edital.vigenciaMeses || 6),
+        vigenciaMeses: Number(edital.vigenciaMeses || 12),
         dataAvaliacaoPresencial: dataAvaliacaoTexto,
 
         // Seção 2
@@ -640,7 +640,7 @@ WhatsApp: (68) 99981-6141 | Instagram: @nocompasso.acre`;
                   </span>
                   <h2 className="text-2xl font-bold uppercase font-condensed text-[#4A041C] mt-2 flex items-center gap-2">
                     <FileText size={22} className="text-[#D81B60]" />{' '}
-                    {edital?.titulo || 'Edital nº 02/2026 — Seleção de Bolsistas'}
+                    {edital?.titulo || 'Edital nº 01/2027 — Seleção de Bolsistas'}
                   </h2>
                 </div>
 
@@ -684,7 +684,7 @@ WhatsApp: (68) 99981-6141 | Instagram: @nocompasso.acre`;
                       className="mt-0.5 accent-[#D81B60]"
                     />
                     <span>
-                      Declaro que li integralmente o <strong>Edital</strong> e estou ciente da duração da bolsa (6 meses) e da avaliação presencial obrigatória em <strong>{dataAvaliacaoTexto}</strong>.
+                      Declaro que li integralmente o <strong>Edital</strong> e estou ciente da duração da bolsa (12 meses) e da avaliação presencial obrigatória em <strong>{dataAvaliacaoTexto}</strong>.
                     </span>
                   </label>
 
