@@ -1,11 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   collection,
   query,
   where,
   getDocs,
   addDoc,
+  doc,
+  getDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import {
   BookOpen,
@@ -25,9 +28,17 @@ import {
   AlertTriangle,
   LogOut,
   Building2,
+  User,
+  Users,
+  X,
+  Copy,
+  Check,
+  QrCode,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
+
+const CHAVE_PIX_STUDIO = '20936547000100';
 
 const DIAS_SEMANA_MAP = [
   { idx: 0, chaves: ['dom', 'domingo'] },
@@ -38,6 +49,10 @@ const DIAS_SEMANA_MAP = [
   { idx: 5, chaves: ['sex', 'sexta'] },
   { idx: 6, chaves: ['sab', 'sáb', 'sabado', 'sábado'] },
 ];
+
+function limparCpf(v) {
+  return (v || '').replace(/\D/g, '');
+}
 
 function verificarAulaProximaHoje(curso, agora) {
   if (!curso || !curso.dataInfo || !curso.horaInicio) return null;
@@ -113,6 +128,7 @@ function calcularProximoVencimento(diaVencimentoPadrao = 5) {
 
 export default function PainelAluno() {
   const { user, userData, logout } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [abaAtiva, setAbaAtiva] = useState('turmas');
   const [carregando, setCarregando] = useState(true);
 
@@ -127,8 +143,22 @@ export default function PainelAluno() {
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
 
+  // Modal de Inscrição Rápida Logada (Individual ou Casal)
+  const [cursoModalInscricao, setCursoModalInscricao] = useState(null);
+  const [modalidadeRapida, setModalidadeRapida] = useState('individual'); // 'individual' | 'casal'
+  const [etapaModal, setEtapaModal] = useState('confirmar'); // 'confirmar' | 'pagamento'
+  const [parceiroEncontradoModal, setParceiroEncontradoModal] = useState(null);
+  const [nomeDupla, setNomeDupla] = useState('');
+  const [cpfDupla, setCpfDupla] = useState('');
+  const [whatsDupla, setWhatsDupla] = useState('');
+  const [nascDupla, setNascDupla] = useState('');
+  const [emailDupla, setEmailDupla] = useState('');
+  const [idTransacaoPixModal, setIdTransacaoPixModal] = useState('');
+  const [pixCopiadoModal, setPixCopiadoModal] = useState(false);
+  const [processandoModal, setProcessandoModal] = useState(false);
+
   // Formulário Fale Conosco (Coordenação ou Professor)
-  const [destinoTipo, setDestinoTipo] = useState('coordenacao'); // 'coordenacao' | 'professor'
+  const [destinoTipo, setDestinoTipo] = useState('coordenacao');
   const [cursoMensagemId, setCursoMensagemId] = useState('');
   const [assuntoMensagem, setAssuntoMensagem] = useState('Matrícula / Mensalidade / Secretaria');
   const [textoMensagem, setTextoMensagem] = useState('');
@@ -143,6 +173,60 @@ export default function PainelAluno() {
     if (!user?.uid) return;
     setCarregando(true);
     try {
+      // Verifica retorno aprovado do Mercado Pago na área do aluno
+      const mpStatus = searchParams.get('mp_status');
+      const refFinId = searchParams.get('ref');
+      if (mpStatus === 'approved' && refFinId) {
+        const finSnap = await getDoc(doc(db, 'financeiro', refFinId));
+        if (finSnap.exists()) {
+          const finData = finSnap.data();
+          const hoje = new Date().toISOString().split('T')[0];
+
+          if (finData.status !== 'pago') {
+            await updateDoc(doc(db, 'financeiro', refFinId), {
+              status: 'pago',
+              dataPagamento: hoje,
+              metodo: 'Mercado Pago (Aprovado Online)',
+            });
+
+            if (finData.cursoId && finData.alunoId) {
+              await addDoc(collection(db, 'matriculas'), {
+                alunoId: finData.alunoId,
+                alunoNome: finData.alunoNomeAvulso,
+                roleParticipante: 'aluno',
+                cursoId: finData.cursoId,
+                cursoTitulo: finData.tituloItem,
+                modalidadeInscricao: finData.modalidadeInscricao || 'individual',
+                parceiroNome: finData.parceiroNome || '',
+                codigoComprovante: finData.codigoComprovante,
+                dataMatricula: hoje,
+                diasRestantes: 30,
+                status: 'ativa',
+              });
+
+              if (finData.modalidadeInscricao === 'casal' && finData.parceiroId) {
+                await addDoc(collection(db, 'matriculas'), {
+                  alunoId: finData.parceiroId,
+                  alunoNome: finData.parceiroNome,
+                  roleParticipante: 'aluno',
+                  cursoId: finData.cursoId,
+                  cursoTitulo: finData.tituloItem,
+                  modalidadeInscricao: 'casal',
+                  parceiroNome: finData.alunoNomeAvulso,
+                  codigoComprovante: finData.codigoComprovante,
+                  dataMatricula: hoje,
+                  diasRestantes: 30,
+                  status: 'ativa',
+                });
+              }
+            }
+            alert('✅ Pagamento aprovado! Sua matrícula já está ativa em Minhas Turmas.');
+          }
+          setSearchParams({});
+          setAbaAtiva('turmas');
+        }
+      }
+
       const [matSnap, cursosSnap, eventosSnap, finSnap, msgsSnap] = await Promise.all([
         getDocs(query(collection(db, 'matriculas'), where('alunoId', '==', user.uid))),
         getDocs(collection(db, 'cursos')),
@@ -182,6 +266,257 @@ export default function PainelAluno() {
     carregarDadosAluno();
   }, [user?.uid]);
 
+  const abrirModalInscricaoRapida = (cursoObj) => {
+    setCursoModalInscricao(cursoObj);
+    setModalidadeRapida('individual');
+    setEtapaModal('confirmar');
+    setParceiroEncontradoModal(null);
+    setNomeDupla('');
+    setCpfDupla('');
+    setWhatsDupla('');
+    setNascDupla('');
+    setEmailDupla('');
+    setIdTransacaoPixModal('');
+  };
+
+  const buscarParceiroNoSistema = async (cpfVal, emailVal) => {
+    const cpfLimpo = limparCpf(cpfVal);
+    const emailLimpo = (emailVal || '').trim().toLowerCase();
+
+    if (cpfLimpo.length === 11) {
+      const snap = await getDocs(collection(db, 'users'));
+      const achado = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .find((u) => limparCpf(u.cpf) === cpfLimpo);
+      if (achado) {
+        setParceiroEncontradoModal(achado);
+        setNomeDupla(achado.nome || '');
+        setEmailDupla(achado.email || '');
+        setWhatsDupla(achado.telefoneRaw || achado.telefone || '');
+        setNascDupla(achado.dataNascimento || '');
+        return;
+      }
+    }
+
+    if (emailLimpo && emailLimpo.includes('@')) {
+      const q = query(collection(db, 'users'), where('email', '==', emailLimpo));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        const achado = { id: d.id, ...d.data() };
+        setParceiroEncontradoModal(achado);
+        setNomeDupla(achado.nome || '');
+        setEmailDupla(achado.email || '');
+        setWhatsDupla(achado.telefoneRaw || achado.telefone || '');
+        setNascDupla(achado.dataNascimento || '');
+        return;
+      }
+    }
+
+    setParceiroEncontradoModal(null);
+  };
+
+  const valorModalCalculado = useMemo(() => {
+    if (!cursoModalInscricao) return 0;
+    const indiv = Number(cursoModalInscricao.valor || 0);
+    if (modalidadeRapida === 'individual') return indiv;
+    return cursoModalInscricao.valorCasal && Number(cursoModalInscricao.valorCasal) > 0
+      ? Number(cursoModalInscricao.valorCasal)
+      : indiv * 2;
+  }, [cursoModalInscricao, modalidadeRapida]);
+
+  const garantirIdParceiroModal = async () => {
+    if (modalidadeRapida !== 'casal') return null;
+    if (parceiroEncontradoModal?.id) return parceiroEncontradoModal.id;
+
+    const refParc = await addDoc(collection(db, 'users'), {
+      nome: nomeDupla,
+      email: emailDupla.trim().toLowerCase(),
+      telefone: whatsDupla,
+      telefoneRaw: whatsDupla,
+      dataNascimento: nascDupla,
+      cpf: cpfDupla,
+      endereco: userData?.endereco || '',
+      role: 'aluno',
+      roles: ['aluno'],
+      tipoCadastro: 'avulso_online_dupla',
+      status: 'ativo',
+      criadoEm: new Date().toISOString(),
+    });
+    return refParc.id;
+  };
+
+  const handleConfirmarEtapaModal = (e) => {
+    e.preventDefault();
+    if (valorModalCalculado === 0) {
+      concluirInscricaoLogada(true);
+    } else {
+      setEtapaModal('pagamento');
+    }
+  };
+
+  const pagarInscricaoLogadaMP = async () => {
+    if (!cursoModalInscricao) return;
+    setProcessandoModal(true);
+    try {
+      const codigoComprovante = `NC-${Date.now().toString(36).toUpperCase()}-${Math.floor(
+        100 + Math.random() * 900
+      )}`;
+      const hoje = new Date().toISOString().split('T')[0];
+      const parceiroId = await garantirIdParceiroModal();
+      const nomeTitular = userData?.nome || user.email;
+
+      const finRef = await addDoc(collection(db, 'financeiro'), {
+        tipo: 'receita',
+        alunoId: user.uid,
+        alunoNomeAvulso: nomeTitular,
+        parceiroId: parceiroId || '',
+        parceiroNome: modalidadeRapida === 'casal' ? nomeDupla : '',
+        modalidadeInscricao: modalidadeRapida,
+        compradorEmail: userData?.email || user.email,
+        compradorTelefone: userData?.telefoneRaw || userData?.telefone || '',
+        cpfComprador: userData?.cpf || '',
+        cursoId: cursoModalInscricao.id,
+        eventoId: '',
+        tituloItem: cursoModalInscricao.titulo,
+        dataSessao: cursoModalInscricao.dataInfo || '',
+        qtdInteira: 1,
+        qtdMeia: 0,
+        valor: valorModalCalculado,
+        dataVencimento: hoje,
+        status: 'pendente_mp',
+        metodo: 'Mercado Pago Checkout',
+        codigoComprovante,
+        observacao:
+          modalidadeRapida === 'casal'
+            ? `Inscrição Casal Portal (${cursoModalInscricao.titulo}) - ${nomeTitular} & ${nomeDupla}`
+            : `Inscrição Portal (${cursoModalInscricao.titulo}) - ${nomeTitular}`,
+        criadoEm: new Date().toISOString(),
+      });
+
+      const resp = await fetch('/api/criar-pagamento-mp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inscricaoId: finRef.id,
+          tituloEvento: cursoModalInscricao.titulo,
+          descricaoItem:
+            modalidadeRapida === 'casal'
+              ? `${cursoModalInscricao.titulo} - Inscrição Casal (${nomeTitular} & ${nomeDupla})`
+              : `${cursoModalInscricao.titulo} - Inscrição Individual (${nomeTitular})`,
+          dataSessao: cursoModalInscricao.dataInfo || '',
+          qtdInteira: 1,
+          valorInteira: valorModalCalculado,
+          qtdMeia: 0,
+          valorMeia: 0,
+          compradorNome: nomeTitular,
+          compradorEmail: userData?.email || user.email,
+          originUrl: window.location.origin,
+          returnPath: '/aluno',
+        }),
+      });
+
+      const data = await resp.json();
+      if (!resp.ok || !data.init_point) {
+        throw new Error(data.error || 'Erro ao gerar link do Mercado Pago.');
+      }
+
+      window.location.href = data.init_point;
+    } catch (err) {
+      alert('Erro ao abrir Mercado Pago: ' + err.message);
+    } finally {
+      setProcessandoModal(false);
+    }
+  };
+
+  const concluirInscricaoLogada = async (isGratuito = false) => {
+    if (!cursoModalInscricao) return;
+    if (!isGratuito && !idTransacaoPixModal.trim()) {
+      alert('Cole o código/ID do comprovante PIX para confirmar.');
+      return;
+    }
+
+    setProcessandoModal(true);
+    try {
+      const codigoComprovante = `NC-${Date.now().toString(36).toUpperCase()}-${Math.floor(
+        100 + Math.random() * 900
+      )}`;
+      const hoje = new Date().toISOString().split('T')[0];
+      const parceiroId = await garantirIdParceiroModal();
+      const nomeTitular = userData?.nome || user.email;
+
+      // Matrícula do aluno logado
+      await addDoc(collection(db, 'matriculas'), {
+        alunoId: user.uid,
+        alunoNome: nomeTitular,
+        roleParticipante: 'aluno',
+        cursoId: cursoModalInscricao.id,
+        cursoTitulo: cursoModalInscricao.titulo,
+        tipoInscricao: 'curso',
+        modalidadeInscricao: modalidadeRapida,
+        parceiroNome: modalidadeRapida === 'casal' ? nomeDupla : '',
+        codigoComprovante,
+        dataMatricula: hoje,
+        diasRestantes: 30,
+        status: 'ativa',
+      });
+
+      // Matrícula da dupla se for casal
+      if (modalidadeRapida === 'casal' && parceiroId) {
+        await addDoc(collection(db, 'matriculas'), {
+          alunoId: parceiroId,
+          alunoNome: nomeDupla,
+          roleParticipante: 'aluno',
+          cursoId: cursoModalInscricao.id,
+          cursoTitulo: cursoModalInscricao.titulo,
+          tipoInscricao: 'curso',
+          modalidadeInscricao: 'casal',
+          parceiroNome: nomeTitular,
+          codigoComprovante,
+          dataMatricula: hoje,
+          diasRestantes: 30,
+          status: 'ativa',
+        });
+      }
+
+      await addDoc(collection(db, 'financeiro'), {
+        tipo: 'receita',
+        alunoId: user.uid,
+        alunoNomeAvulso: nomeTitular,
+        parceiroId: parceiroId || '',
+        parceiroNome: modalidadeRapida === 'casal' ? nomeDupla : '',
+        modalidadeInscricao: modalidadeRapida,
+        cursoId: cursoModalInscricao.id,
+        eventoId: '',
+        tituloItem: cursoModalInscricao.titulo,
+        valor: valorModalCalculado,
+        dataVencimento: hoje,
+        dataPagamento: hoje,
+        status: 'pago',
+        metodo: isGratuito ? 'Gratuito' : `PIX Direto (Ref: ${idTransacaoPixModal})`,
+        codigoComprovante,
+        observacao:
+          modalidadeRapida === 'casal'
+            ? `Inscrição Casal Portal (${cursoModalInscricao.titulo}) - ${nomeTitular} & ${nomeDupla}`
+            : `Inscrição Portal (${cursoModalInscricao.titulo}) - ${nomeTitular}`,
+        criadoEm: new Date().toISOString(),
+      });
+
+      alert(
+        modalidadeRapida === 'casal'
+          ? `✅ Inscrição em casal confirmada para ${nomeTitular} & ${nomeDupla}!`
+          : '✅ Inscrição confirmada com sucesso!'
+      );
+      setCursoModalInscricao(null);
+      setAbaAtiva('turmas');
+      carregarDadosAluno();
+    } catch (err) {
+      alert('Erro ao concluir inscrição: ' + err.message);
+    } finally {
+      setProcessandoModal(false);
+    }
+  };
+
   const turmasMatriculadas = useMemo(() => {
     const hojeIso = new Date().toISOString().split('T')[0];
 
@@ -216,6 +551,7 @@ export default function PainelAluno() {
           ...cursoObj,
           matriculaId: mat.id,
           dataMatricula: mat.dataMatricula,
+          parceiroNome: mat.parceiroNome || '',
           diaVencimento: diaVenc,
           proximoVencimento: proxVenc,
           qtdPagas: pagasList.length,
@@ -376,7 +712,6 @@ export default function PainelAluno() {
       return;
     }
 
-    // Envio direto para a Coordenação Geral / Secretaria
     setEnviandoMsg(true);
     try {
       await addDoc(collection(db, 'mensagens'), {
@@ -638,6 +973,12 @@ export default function PainelAluno() {
                               {turma.titulo}
                             </h3>
 
+                            {turma.parceiroNome && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-pink-50 border border-pink-200 text-[11px] font-bold text-[#D81B60]">
+                                <Users size={13} /> Dupla com: {turma.parceiroNome}
+                              </span>
+                            )}
+
                             <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2 text-xs">
                               <p className="flex items-center gap-2 font-bold text-[#4A041C]">
                                 <Calendar size={15} className="text-[#D81B60]" />
@@ -716,7 +1057,7 @@ export default function PainelAluno() {
                     Novos Cursos, Workshops & Bailes do Studio
                   </h3>
                   <p className="text-xs text-zinc-500">
-                    Garanta sua vaga ou ingresso diretamente pelo link oficial de inscrição.
+                    Para cursos e turmas, seus dados já são preenchidos automaticamente em 1 clique!
                   </p>
                 </div>
 
@@ -781,20 +1122,22 @@ export default function PainelAluno() {
                             </strong>
                           </div>
 
-                          <Link
-                            to={`/inscricao/${ativ.categoriaItem}/${ativ.id}`}
-                            className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-4 py-2.5 text-xs font-bold uppercase text-white shadow-sm transition"
-                          >
-                            {ativ.categoriaItem === 'evento' ? (
-                              <>
-                                <Ticket size={15} /> Comprar Ingresso
-                              </>
-                            ) : (
-                              <>
-                                Inscrever-se <ExternalLink size={14} />
-                              </>
-                            )}
-                          </Link>
+                          {ativ.categoriaItem === 'evento' ? (
+                            <Link
+                              to={`/inscricao/evento/${ativ.id}`}
+                              className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-4 py-2.5 text-xs font-bold uppercase text-white shadow-sm transition"
+                            >
+                              <Ticket size={15} /> Comprar Ingresso
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => abrirModalInscricaoRapida(ativ)}
+                              className="inline-flex items-center gap-2 rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-4 py-2.5 text-xs font-bold uppercase text-white shadow-sm transition"
+                            >
+                              Inscrever-se <ExternalLink size={14} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -803,9 +1146,6 @@ export default function PainelAluno() {
               </div>
             )}
 
-            {/* ================================================================= */}
-            {/* ABA 3: FALE CONOSCO (COORDENAÇÃO GERAL OU PROFESSOR DA TURMA)     */}
-            {/* ================================================================= */}
             {abaAtiva === 'fale_conosco' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm h-fit space-y-4">
@@ -816,7 +1156,6 @@ export default function PainelAluno() {
                     </h3>
                   </div>
 
-                  {/* SELETOR DE DESTINO: COORDENAÇÃO vs PROFESSOR */}
                   <div>
                     <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
                       Para quem deseja enviar?
@@ -955,7 +1294,6 @@ export default function PainelAluno() {
                   )}
                 </div>
 
-                {/* HISTÓRICO DE MENSAGENS ENVIADAS */}
                 <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
                   <h3 className="text-lg font-bold uppercase font-condensed text-zinc-900">
                     Mensagens Enviadas ({minhasMensagens.length})
@@ -1006,6 +1344,239 @@ export default function PainelAluno() {
           </>
         )}
       </main>
+
+      {/* ===================================================================== */}
+      {/* MODAL DE INSCRIÇÃO RÁPIDA (SEM REDIGITAR DADOS + OPÇÃO CASAL)          */}
+      {/* ===================================================================== */}
+      {cursoModalInscricao && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-zinc-200 shadow-2xl overflow-hidden my-8">
+            <div className="bg-[#4A041C] p-5 text-white flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-pink-200">
+                  Inscrição Rápida do Portal
+                </span>
+                <h3 className="text-xl font-bold uppercase font-condensed">
+                  {cursoModalInscricao.titulo}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCursoModalInscricao(null)}
+                className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {etapaModal === 'confirmar' ? (
+              <form onSubmit={handleConfirmarEtapaModal} className="p-6 space-y-4">
+                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-950 space-y-1">
+                  <p className="font-bold flex items-center gap-1.5 text-emerald-800">
+                    <UserCheck size={15} /> Seus dados já foram preenchidos pelo Portal:
+                  </p>
+                  <p><strong>Nome:</strong> {userData?.nome || user.email}</p>
+                  <p>
+                    <strong>CPF:</strong> {userData?.cpf || 'Cadastrado'} • <strong>WhatsApp:</strong>{' '}
+                    {userData?.telefoneRaw || userData?.telefone || 'Cadastrado'}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-600 mb-1.5">
+                    Escolha a Modalidade
+                  </label>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setModalidadeRapida('individual')}
+                      className={`p-3 rounded-xl border text-left transition ${
+                        modalidadeRapida === 'individual'
+                          ? 'bg-[#4A041C] text-white border-[#4A041C]'
+                          : 'bg-zinc-50 text-zinc-700 border-zinc-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
+                        <User size={14} /> Individual
+                      </span>
+                      <span className="block text-sm font-bold mt-1">
+                        R$ {Number(cursoModalInscricao.valor || 0).toFixed(2).replace('.', ',')}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setModalidadeRapida('casal')}
+                      className={`p-3 rounded-xl border text-left transition ${
+                        modalidadeRapida === 'casal'
+                          ? 'bg-[#D81B60] text-white border-[#D81B60]'
+                          : 'bg-zinc-50 text-zinc-700 border-zinc-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
+                        <Users size={14} /> Adicionar Dupla / Casal
+                      </span>
+                      <span className="block text-sm font-bold mt-1">
+                        R${' '}
+                        {(cursoModalInscricao.valorCasal && Number(cursoModalInscricao.valorCasal) > 0
+                          ? Number(cursoModalInscricao.valorCasal)
+                          : Number(cursoModalInscricao.valor || 0) * 2
+                        )
+                          .toFixed(2)
+                          .replace('.', ',')}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {modalidadeRapida === 'casal' && (
+                  <div className="p-4 rounded-2xl bg-pink-50/70 border border-[#D81B60]/30 space-y-2.5">
+                    <p className="text-xs font-bold uppercase text-[#4A041C]">
+                      Dados da Pessoa da sua Dupla
+                    </p>
+
+                    {parceiroEncontradoModal && (
+                      <div className="p-2 rounded-lg bg-emerald-100 text-emerald-900 text-[11px] font-bold">
+                        ✓ {parceiroEncontradoModal.nome} já tem cadastro no Studio!
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        required
+                        placeholder="CPF da dupla"
+                        value={cpfDupla}
+                        onChange={(e) => {
+                          setCpfDupla(e.target.value);
+                          if (limparCpf(e.target.value).length === 11) {
+                            buscarParceiroNoSistema(e.target.value, emailDupla);
+                          }
+                        }}
+                        className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                      />
+                      <input
+                        type="email"
+                        required
+                        placeholder="E-mail da dupla"
+                        value={emailDupla}
+                        onBlur={() => buscarParceiroNoSistema(cpfDupla, emailDupla)}
+                        onChange={(e) => setEmailDupla(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                      />
+                    </div>
+
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nome completo da dupla"
+                      value={nomeDupla}
+                      onChange={(e) => setNomeDupla(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                    />
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        required
+                        placeholder="WhatsApp (68) 99999-9999"
+                        value={whatsDupla}
+                        onChange={(e) => setWhatsDupla(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                      />
+                      <input
+                        type="date"
+                        required
+                        value={nascDupla}
+                        onChange={(e) => setNascDupla(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={processandoModal}
+                  className="w-full rounded-xl bg-[#D81B60] hover:bg-[#AD1457] py-3 text-xs font-bold uppercase tracking-wider text-white shadow"
+                >
+                  {valorModalCalculado === 0
+                    ? 'Confirmar Inscrição Gratuita'
+                    : modalidadeRapida === 'casal'
+                    ? `Confirmar Dupla & Ir para Pagamento (R$ ${valorModalCalculado.toFixed(2).replace('.', ',')})`
+                    : `Confirmar Inscrição Individual (R$ ${valorModalCalculado.toFixed(2).replace('.', ',')})`}
+                </button>
+              </form>
+            ) : (
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-zinc-200 pb-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase text-zinc-500">Total a Pagar</span>
+                    <p className="text-2xl font-bold font-condensed text-[#4A041C]">
+                      R$ {valorModalCalculado.toFixed(2).replace('.', ',')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEtapaModal('confirmar')}
+                    className="text-xs font-bold text-zinc-500 underline"
+                  >
+                    Voltar
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={processandoModal}
+                  onClick={pagarInscricaoLogadaMP}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-700 py-3 text-xs font-bold uppercase text-white shadow"
+                >
+                  {processandoModal ? 'Abrindo Mercado Pago...' : 'Pagar Agora no Mercado Pago'}
+                  <ExternalLink size={15} />
+                </button>
+
+                <div className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2.5">
+                  <span className="block text-[11px] font-bold uppercase text-[#4A041C]">
+                    Ou pague via PIX Direto:
+                  </span>
+                  <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-zinc-300">
+                    <span className="font-mono text-xs font-bold">{CHAVE_PIX_STUDIO}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(CHAVE_PIX_STUDIO);
+                        setPixCopiadoModal(true);
+                        setTimeout(() => setPixCopiadoModal(false), 2000);
+                      }}
+                      className="flex items-center gap-1 rounded-lg bg-[#4A041C] px-2.5 py-1.5 text-[11px] font-bold text-white"
+                    >
+                      {pixCopiadoModal ? <Check size={13} /> : <Copy size={13} />}
+                      {pixCopiadoModal ? 'Copiado!' : 'Copiar'}
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="Cole o ID / Código do comprovante PIX"
+                    value={idTransacaoPixModal}
+                    onChange={(e) => setIdTransacaoPixModal(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                  />
+
+                  <button
+                    type="button"
+                    disabled={processandoModal}
+                    onClick={() => concluirInscricaoLogada(false)}
+                    className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-2.5 text-xs font-bold uppercase text-white"
+                  >
+                    <QrCode size={15} /> Confirmar PIX & Ativar Matrícula
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
