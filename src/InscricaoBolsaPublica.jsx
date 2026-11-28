@@ -479,7 +479,7 @@ WhatsApp: (68) 99981-6141 | Instagram: @nocompasso.acre`;
         editalId: edital.id,
         editalTitulo: edital.titulo || 'Edital nº 01/2027 — Bolsas Dança de Salão',
         dataInicioBolsaPrevista: edital.dataInicioBolsa || '2027-01-11',
-        dataFimBolsaPrevista: edital.dataFimBolsa || '2027-07-11',
+        dataFimBolsaPrevista: edital.dataFimBolsa || '2028-01-11',
         vigenciaMeses: Number(edital.vigenciaMeses || 12),
         dataAvaliacaoPresencial: dataAvaliacaoTexto,
 
