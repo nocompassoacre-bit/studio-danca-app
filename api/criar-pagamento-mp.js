@@ -15,6 +15,7 @@ export default async function handler(req, res) {
     const {
       inscricaoId,
       tituloEvento,
+      descricaoItem,
       dataSessao,
       qtdInteira,
       valorInteira,
@@ -23,6 +24,7 @@ export default async function handler(req, res) {
       compradorNome,
       compradorEmail,
       originUrl,
+      returnPath,
     } = req.body;
 
     const items = [];
@@ -30,7 +32,7 @@ export default async function handler(req, res) {
     if (Number(qtdInteira) > 0) {
       items.push({
         id: `${inscricaoId}_inteira`,
-        title: `${tituloEvento} (${dataSessao}) - Ingresso Inteira`,
+        title: descricaoItem || `${tituloEvento} (${dataSessao}) - Ingresso Inteira`,
         quantity: Number(qtdInteira),
         currency_id: 'BRL',
         unit_price: Number(valorInteira),
@@ -48,6 +50,8 @@ export default async function handler(req, res) {
     }
 
     const baseUrl = originUrl || 'https://studio-danca-app.vercel.app';
+    const destinoRetorno = returnPath ? `${baseUrl}${returnPath}` : `${baseUrl}/`;
+    const separador = destinoRetorno.includes('?') ? '&' : '?';
 
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST',
@@ -63,9 +67,9 @@ export default async function handler(req, res) {
         },
         external_reference: inscricaoId,
         back_urls: {
-          success: `${baseUrl}/?mp_status=approved&ref=${inscricaoId}`,
-          failure: `${baseUrl}/?mp_status=failure&ref=${inscricaoId}`,
-          pending: `${baseUrl}/?mp_status=pending&ref=${inscricaoId}`,
+          success: `${destinoRetorno}${separador}mp_status=approved&ref=${inscricaoId}`,
+          failure: `${destinoRetorno}${separador}mp_status=failure&ref=${inscricaoId}`,
+          pending: `${destinoRetorno}${separador}mp_status=pending&ref=${inscricaoId}`,
         },
         auto_return: 'approved',
         statement_descriptor: 'NO COMPASSO STUDIO',
