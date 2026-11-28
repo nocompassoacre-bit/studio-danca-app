@@ -8,6 +8,7 @@ import PainelBolsista from './PainelBolsista';
 import PainelAluno from './PainelAluno';
 import InscricaoPublica from './InscricaoPublica';
 import CadastroUnicoPublico from './CadastroUnicoPublico';
+import InscricaoBolsaPublica from './InscricaoBolsaPublica';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="/" element={<HomePublica />} />
           <Route path="/inscricao/:tipo/:id" element={<InscricaoPublica />} />
           <Route path="/cadastro-unico/:token" element={<CadastroUnicoPublico />} />
+          <Route path="/selecao-bolsa/:editalId" element={<InscricaoBolsaPublica />} />
 
           <Route
             path="/admin/*"
