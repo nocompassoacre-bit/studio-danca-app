@@ -381,6 +381,26 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
           </button>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={exportarPlanilhaSolicitacoes}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 text-xs font-bold uppercase text-white transition"
+            >
+              <FileSpreadsheet size={15} />
+              Exportar Planilha ({solicitacoes.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMostrarFormEdital((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#4A041C] hover:bg-[#D81B60] px-4 py-2.5 text-xs font-bold uppercase text-white transition"
+            >
+              <PlusCircle size={15} />
+              {mostrarFormEdital ? 'Fechar Formulário' : 'Abrir Novo Edital / Link Público'}
+            </button>
+          </div>
+
         {/* FORMULÁRIO PARA CRIAR/ABRIR NOVO EDITAL */}
         {mostrarFormEdital && (
           <form
