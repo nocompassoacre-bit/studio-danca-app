@@ -381,7 +381,9 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={exportarPlanilhaSolicitacoes}
@@ -400,6 +402,7 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
               {mostrarFormEdital ? 'Fechar Formulário' : 'Abrir Novo Edital / Link Público'}
             </button>
           </div>
+        </div>
 
         {/* FORMULÁRIO PARA CRIAR/ABRIR NOVO EDITAL */}
         {mostrarFormEdital && (
