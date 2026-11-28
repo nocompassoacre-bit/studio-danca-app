@@ -24,10 +24,41 @@ import {
   AlertCircle,
   Ticket,
   MapPin,
+  Users,
+  User,
+  UserCheck,
 } from 'lucide-react';
 import { db } from './firebase';
 
 const CHAVE_PIX_STUDIO = '20936547000100'; // Substitua pela chave PIX real do studio
+
+function limparCpf(v) {
+  return (v || '').replace(/\D/g, '');
+}
+
+async function buscarUsuarioExistente(cpfDigitado, emailDigitado) {
+  const cpfLimpo = limparCpf(cpfDigitado);
+  const emailLimpo = (emailDigitado || '').trim().toLowerCase();
+
+  if (cpfLimpo.length === 11) {
+    const snapTodos = await getDocs(collection(db, 'users'));
+    const porCpf = snapTodos.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .find((u) => limparCpf(u.cpf) === cpfLimpo);
+    if (porCpf) return porCpf;
+  }
+
+  if (emailLimpo && emailLimpo.includes('@')) {
+    const qEmail = query(collection(db, 'users'), where('email', '==', emailLimpo));
+    const snapEmail = await getDocs(qEmail);
+    if (!snapEmail.empty) {
+      const d = snapEmail.docs[0];
+      return { id: d.id, ...d.data() };
+    }
+  }
+
+  return null;
+}
 
 export default function InscricaoPublica() {
   const { tipo, id } = useParams();
@@ -41,18 +72,31 @@ export default function InscricaoPublica() {
   const [pixCopiado, setPixCopiado] = useState(false);
   const [gerandoLinkMp, setGerandoLinkMp] = useState(false);
 
+  // Modalidade para Cursos: 'individual' | 'casal'
+  const [modalidadeInscricao, setModalidadeInscricao] = useState('individual');
+
   // Seleção de Sessão e Ingressos (para eventos)
   const [sessaoSelecionadaId, setSessaoSelecionadaId] = useState('');
   const [qtdInteira, setQtdInteira] = useState(1);
   const [qtdMeia, setQtdMeia] = useState(0);
 
-  // Dados do inscrito/comprador
+  // Dados do inscrito principal
+  const [alunoExistente, setAlunoExistente] = useState(null);
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [telefone, setTelefone] = useState('');
   const [dataNascimento, setDataNascimento] = useState('');
   const [cpf, setCpf] = useState('');
   const [endereco, setEndereco] = useState('');
+
+  // Dados do(a) Parceiro(a) (quando modalidade === 'casal')
+  const [parceiroExistente, setParceiroExistente] = useState(null);
+  const [nomeParceiro, setNomeParceiro] = useState('');
+  const [cpfParceiro, setCpfParceiro] = useState('');
+  const [telefoneParceiro, setTelefoneParceiro] = useState('');
+  const [dataNascimentoParceiro, setDataNascimentoParceiro] = useState('');
+  const [emailParceiro, setEmailParceiro] = useState('');
+
   const [metodoPagamento, setMetodoPagamento] = useState('Mercado Pago');
   const [idTransacao, setIdTransacao] = useState('');
 
@@ -99,23 +143,67 @@ export default function InscricaoPublica() {
           const finSnap = await getDoc(doc(db, 'financeiro', refFinId));
           if (finSnap.exists()) {
             const finData = finSnap.data();
+            const hoje = new Date().toISOString().split('T')[0];
+
             if (finData.status !== 'pago') {
               await updateDoc(doc(db, 'financeiro', refFinId), {
                 status: 'pago',
-                dataPagamento: new Date().toISOString().split('T')[0],
+                dataPagamento: hoje,
                 metodo: 'Mercado Pago (Aprovado Online)',
               });
+
+              // Efetiva matrícula(s) no retorno aprovado
+              if (finData.cursoId && finData.alunoId) {
+                await addDoc(collection(db, 'matriculas'), {
+                  alunoId: finData.alunoId,
+                  alunoNome: finData.alunoNomeAvulso,
+                  roleParticipante: 'aluno',
+                  cursoId: finData.cursoId,
+                  cursoTitulo: finData.tituloItem,
+                  modalidadeInscricao: finData.modalidadeInscricao || 'individual',
+                  parceiroNome: finData.parceiroNome || '',
+                  codigoComprovante: finData.codigoComprovante,
+                  dataMatricula: hoje,
+                  diasRestantes: 30,
+                  status: 'ativa',
+                });
+
+                if (finData.modalidadeInscricao === 'casal' && finData.parceiroId) {
+                  await addDoc(collection(db, 'matriculas'), {
+                    alunoId: finData.parceiroId,
+                    alunoNome: finData.parceiroNome,
+                    roleParticipante: 'aluno',
+                    cursoId: finData.cursoId,
+                    cursoTitulo: finData.tituloItem,
+                    modalidadeInscricao: 'casal',
+                    parceiroNome: finData.alunoNomeAvulso,
+                    codigoComprovante: finData.codigoComprovante,
+                    dataMatricula: hoje,
+                    diasRestantes: 30,
+                    status: 'ativa',
+                  });
+                }
+              }
             }
+
             setComprovante({
               codigo: finData.codigoComprovante,
-              nome: finData.alunoNomeAvulso,
+              nome:
+                finData.modalidadeInscricao === 'casal' && finData.parceiroNome
+                  ? `${finData.alunoNomeAvulso} & ${finData.parceiroNome}`
+                  : finData.alunoNomeAvulso,
               cpf: finData.cpfComprador || '',
-              titulo: finData.tituloItem || 'Evento No Compasso',
+              titulo: finData.tituloItem || 'No Compasso Studio',
               data: finData.dataSessao || '',
               horario: finData.horarioSessao || '',
               valor: Number(finData.valor || 0),
               metodo: 'Mercado Pago Online (Confirmado)',
-              detalheIngressos: `${finData.qtdInteira || 0} Inteira(s), ${finData.qtdMeia || 0} Meia(s)`,
+              detalheIngressos:
+                finData.modalidadeInscricao === 'casal'
+                  ? 'Inscrição em Casal / Dupla'
+                  : tipo === 'evento'
+                  ? `${finData.qtdInteira || 0} Inteira(s), ${finData.qtdMeia || 0} Meia(s)`
+                  : 'Inscrição Individual',
             });
             setEtapa('comprovante');
           }
@@ -128,6 +216,41 @@ export default function InscricaoPublica() {
     };
     carregarItem();
   }, [tipo, id, searchParams]);
+
+  // Reconhecimento automático do aluno principal pelo CPF ou E-mail
+  const verificarAlunoPrincipal = async (novoCpf, novoEmail) => {
+    const encontrado = await buscarUsuarioExistente(novoCpf, novoEmail);
+    if (encontrado) {
+      setAlunoExistente(encontrado);
+      if (encontrado.nome) setNome(encontrado.nome);
+      if (encontrado.email) setEmail(encontrado.email);
+      if (encontrado.telefoneRaw || encontrado.telefone) {
+        setTelefone(encontrado.telefoneRaw || encontrado.telefone);
+      }
+      if (encontrado.dataNascimento) setDataNascimento(encontrado.dataNascimento);
+      if (encontrado.cpf) setCpf(encontrado.cpf);
+      if (encontrado.endereco) setEndereco(encontrado.endereco);
+    } else {
+      setAlunoExistente(null);
+    }
+  };
+
+  // Reconhecimento automático do(a) parceiro(a) pelo CPF ou E-mail
+  const verificarParceiro = async (novoCpf, novoEmail) => {
+    const encontrado = await buscarUsuarioExistente(novoCpf, novoEmail);
+    if (encontrado) {
+      setParceiroExistente(encontrado);
+      if (encontrado.nome) setNomeParceiro(encontrado.nome);
+      if (encontrado.email) setEmailParceiro(encontrado.email);
+      if (encontrado.telefoneRaw || encontrado.telefone) {
+        setTelefoneParceiro(encontrado.telefoneRaw || encontrado.telefone);
+      }
+      if (encontrado.dataNascimento) setDataNascimentoParceiro(encontrado.dataNascimento);
+      if (encontrado.cpf) setCpfParceiro(encontrado.cpf);
+    } else {
+      setParceiroExistente(null);
+    }
+  };
 
   const sessoesDisponiveis = useMemo(() => {
     if (tipo !== 'evento' || !item) return [];
@@ -167,13 +290,72 @@ export default function InscricaoPublica() {
     item?.valorMeia ?? (precoInteira > 0 ? precoInteira / 2 : 0)
   );
 
+  const precoCursoIndividual = Number(item?.valor || 0);
+  const precoCursoCasal =
+    item?.valorCasal !== undefined && item?.valorCasal !== '' && Number(item.valorCasal) > 0
+      ? Number(item.valorCasal)
+      : precoCursoIndividual * 2;
+
   const totalIngressosSelecionados =
-    tipo === 'evento' ? Number(qtdInteira) + Number(qtdMeia) : 1;
+    tipo === 'evento'
+      ? Number(qtdInteira) + Number(qtdMeia)
+      : modalidadeInscricao === 'casal'
+      ? 2
+      : 1;
 
   const valorTotalCalculado =
     tipo === 'evento'
       ? Number(qtdInteira) * precoInteira + Number(qtdMeia) * precoMeia
-      : Number(item?.valor || 0);
+      : modalidadeInscricao === 'casal'
+      ? precoCursoCasal
+      : precoCursoIndividual;
+
+  const garantirCadastrosAlunos = async () => {
+    // 1. Titular
+    let titularId = alunoExistente?.id;
+    if (!titularId) {
+      const refTitular = await addDoc(collection(db, 'users'), {
+        nome,
+        email: email.trim().toLowerCase(),
+        telefone,
+        telefoneRaw: telefone,
+        dataNascimento,
+        cpf,
+        endereco,
+        role: 'aluno',
+        roles: ['aluno'],
+        tipoCadastro: 'avulso_online',
+        status: 'ativo',
+        criadoEm: new Date().toISOString(),
+      });
+      titularId = refTitular.id;
+    }
+
+    // 2. Parceiro(a) se for casal
+    let parceiroId = null;
+    if (tipo === 'curso' && modalidadeInscricao === 'casal') {
+      parceiroId = parceiroExistente?.id;
+      if (!parceiroId) {
+        const refParc = await addDoc(collection(db, 'users'), {
+          nome: nomeParceiro,
+          email: (emailParceiro || '').trim().toLowerCase(),
+          telefone: telefoneParceiro,
+          telefoneRaw: telefoneParceiro,
+          dataNascimento: dataNascimentoParceiro,
+          cpf: cpfParceiro,
+          endereco,
+          role: 'aluno',
+          roles: ['aluno'],
+          tipoCadastro: 'avulso_online_dupla',
+          status: 'ativo',
+          criadoEm: new Date().toISOString(),
+        });
+        parceiroId = refParc.id;
+      }
+    }
+
+    return { titularId, parceiroId };
+  };
 
   const avancarParaPagamento = (e) => {
     e.preventDefault();
@@ -205,10 +387,16 @@ export default function InscricaoPublica() {
       )}`;
       const hoje = new Date().toISOString().split('T')[0];
 
-      // Salva pré-reserva no Firestore antes de ir para o Mercado Pago
+      const { titularId, parceiroId } = await garantirCadastrosAlunos();
+      const isCasal = tipo === 'curso' && modalidadeInscricao === 'casal';
+
       const finRef = await addDoc(collection(db, 'financeiro'), {
         tipo: 'receita',
+        alunoId: titularId,
         alunoNomeAvulso: nome,
+        parceiroId: parceiroId || '',
+        parceiroNome: isCasal ? nomeParceiro : '',
+        modalidadeInscricao: tipo === 'curso' ? modalidadeInscricao : 'evento',
         compradorEmail: email,
         compradorTelefone: telefone,
         cpfComprador: cpf,
@@ -216,9 +404,9 @@ export default function InscricaoPublica() {
         eventoId: tipo === 'evento' ? id : '',
         tituloItem: item.titulo,
         sessaoId: sessaoAtual?.id || 'sessao_1',
-        dataSessao: sessaoAtual?.data || item.data || '',
+        dataSessao: sessaoAtual?.data || item.data || item.dataInfo || '',
         horarioSessao: `${sessaoAtual?.horaInicio || item.horaInicio || '19:00'} às ${
-          sessaoAtual?.horaFim || item.horaFim || '22:00'
+          sessaoAtual?.horaFim || item.horarioFim || item.horaFim || '22:00'
         }`,
         qtdInteira: tipo === 'evento' ? Number(qtdInteira) : 1,
         qtdMeia: tipo === 'evento' ? Number(qtdMeia) : 0,
@@ -227,7 +415,9 @@ export default function InscricaoPublica() {
         status: 'pendente_mp',
         metodo: 'Mercado Pago Checkout',
         codigoComprovante,
-        observacao: `Checkout Online (${item.titulo}) - ${nome}`,
+        observacao: isCasal
+          ? `Inscrição Casal (${item.titulo}) - ${nome} & ${nomeParceiro}`
+          : `Checkout Online (${item.titulo}) - ${nome}`,
         criadoEm: new Date().toISOString(),
       });
 
@@ -237,6 +427,11 @@ export default function InscricaoPublica() {
         body: JSON.stringify({
           inscricaoId: finRef.id,
           tituloEvento: item.titulo,
+          descricaoItem: isCasal
+            ? `${item.titulo} - Inscrição Casal (${nome} & ${nomeParceiro})`
+            : tipo === 'curso'
+            ? `${item.titulo} - Inscrição Individual (${nome})`
+            : undefined,
           dataSessao: sessaoAtual?.data || item.data || item.dataInfo || '',
           qtdInteira: tipo === 'evento' ? Number(qtdInteira) : 1,
           valorInteira: tipo === 'evento' ? precoInteira : valorTotalCalculado,
@@ -245,6 +440,7 @@ export default function InscricaoPublica() {
           compradorNome: nome,
           compradorEmail: email,
           originUrl: window.location.origin,
+          returnPath: `/inscricao/${tipo}/${id}`,
         }),
       });
 
@@ -282,36 +478,50 @@ export default function InscricaoPublica() {
       )}`;
       const hoje = new Date().toISOString().split('T')[0];
 
-      const alunoAvulsoRef = await addDoc(collection(db, 'users'), {
-        nome,
-        email,
-        telefone,
-        dataNascimento,
-        cpf,
-        endereco,
-        role: 'aluno',
-        tipoCadastro: 'avulso_online',
-        status: 'ativo',
-        criadoEm: new Date().toISOString(),
-      });
+      const { titularId, parceiroId } = await garantirCadastrosAlunos();
+      const isCasal = tipo === 'curso' && modalidadeInscricao === 'casal';
 
+      // Matrícula do Titular
       await addDoc(collection(db, 'matriculas'), {
-        alunoId: alunoAvulsoRef.id,
+        alunoId: titularId,
         alunoNome: nome,
         roleParticipante: 'aluno',
         cursoId: id,
         cursoTitulo: item.titulo,
         tipoInscricao: tipo,
+        modalidadeInscricao: tipo === 'curso' ? modalidadeInscricao : 'evento',
+        parceiroNome: isCasal ? nomeParceiro : '',
         codigoComprovante,
         dataMatricula: hoje,
         diasRestantes: tipo === 'curso' ? 30 : 1,
         status: 'ativa',
       });
 
+      // Matrícula do(a) Parceiro(a) se for Casal
+      if (isCasal && parceiroId) {
+        await addDoc(collection(db, 'matriculas'), {
+          alunoId: parceiroId,
+          alunoNome: nomeParceiro,
+          roleParticipante: 'aluno',
+          cursoId: id,
+          cursoTitulo: item.titulo,
+          tipoInscricao: tipo,
+          modalidadeInscricao: 'casal',
+          parceiroNome: nome,
+          codigoComprovante,
+          dataMatricula: hoje,
+          diasRestantes: 30,
+          status: 'ativa',
+        });
+      }
+
       await addDoc(collection(db, 'financeiro'), {
         tipo: 'receita',
-        alunoId: alunoAvulsoRef.id,
+        alunoId: titularId,
         alunoNomeAvulso: nome,
+        parceiroId: parceiroId || '',
+        parceiroNome: isCasal ? nomeParceiro : '',
+        modalidadeInscricao: tipo === 'curso' ? modalidadeInscricao : 'evento',
         cursoId: tipo === 'curso' ? id : '',
         eventoId: tipo === 'evento' ? id : '',
         tituloItem: item.titulo,
@@ -327,13 +537,15 @@ export default function InscricaoPublica() {
           ? 'Isento / Gratuito'
           : `${metodoPagamento} (Ref: ${idTransacao})`,
         codigoComprovante,
-        observacao: `Inscrição Online (${item.titulo}) - ${nome}`,
+        observacao: isCasal
+          ? `Inscrição Casal (${item.titulo}) - ${nome} & ${nomeParceiro}`
+          : `Inscrição Online (${item.titulo}) - ${nome}`,
         criadoEm: new Date().toISOString(),
       });
 
       setComprovante({
         codigo: codigoComprovante,
-        nome,
+        nome: isCasal ? `${nome} & ${nomeParceiro}` : nome,
         cpf,
         titulo: item.titulo,
         data:
@@ -346,7 +558,11 @@ export default function InscricaoPublica() {
         valor: valorTotalCalculado,
         metodo: isGratuito ? 'Gratuito' : `${metodoPagamento} • Ref: ${idTransacao}`,
         detalheIngressos:
-          tipo === 'evento' ? `${qtdInteira} Inteira(s), ${qtdMeia} Meia(s)` : 'Inscrição Individual',
+          tipo === 'evento'
+            ? `${qtdInteira} Inteira(s), ${qtdMeia} Meia(s)`
+            : isCasal
+            ? 'Inscrição em Casal / Dupla'
+            : 'Inscrição Individual',
       });
       setEtapa('comprovante');
     } catch (err) {
@@ -414,9 +630,9 @@ export default function InscricaoPublica() {
               </div>
 
               <div className="bg-zinc-50 rounded-2xl p-4 text-left text-sm space-y-2 border border-zinc-200">
-                <p><strong>Titular:</strong> {comprovante.nome}</p>
+                <p><strong>Titular(es):</strong> {comprovante.nome}</p>
                 <p><strong>Atividade:</strong> {comprovante.titulo}</p>
-                <p><strong>Ingressos:</strong> {comprovante.detalheIngressos}</p>
+                <p><strong>Modalidade:</strong> {comprovante.detalheIngressos}</p>
                 <p><strong>Data / Horário:</strong> {comprovante.data} • {comprovante.horario}</p>
                 <p className="text-emerald-700 font-bold">
                   <strong>Valor Pago:</strong> R$ {comprovante.valor.toFixed(2).replace('.', ',')}
@@ -428,7 +644,7 @@ export default function InscricaoPublica() {
                 onClick={() => window.print()}
                 className="w-full rounded-xl bg-[#4A041C] py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#2D0210]"
               >
-                Salvar / Imprimir Ingresso
+                Salvar / Imprimir Comprovante
               </button>
             </div>
           </div>
@@ -466,6 +682,50 @@ export default function InscricaoPublica() {
 
             {etapa === 'dados' && (
               <form onSubmit={avancarParaPagamento} className="p-6 sm:p-8 space-y-4">
+                {/* SELETOR INDIVIDUAL vs CASAL PARA CURSOS */}
+                {tipo === 'curso' && (
+                  <div className="p-3.5 rounded-2xl bg-pink-50/70 border border-[#D81B60]/30 space-y-2">
+                    <p className="text-xs font-bold uppercase text-[#4A041C]">
+                      Tipo de Inscrição
+                    </p>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setModalidadeInscricao('individual')}
+                        className={`p-3 rounded-xl border text-left transition ${
+                          modalidadeInscricao === 'individual'
+                            ? 'bg-[#4A041C] text-white border-[#4A041C]'
+                            : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
+                          <User size={14} /> Individual
+                        </span>
+                        <span className="block text-sm font-bold mt-1">
+                          R$ {precoCursoIndividual.toFixed(2).replace('.', ',')}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setModalidadeInscricao('casal')}
+                        className={`p-3 rounded-xl border text-left transition ${
+                          modalidadeInscricao === 'casal'
+                            ? 'bg-[#D81B60] text-white border-[#D81B60]'
+                            : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
+                          <Users size={14} /> Casal / Dupla
+                        </span>
+                        <span className="block text-sm font-bold mt-1">
+                          R$ {precoCursoCasal.toFixed(2).replace('.', ',')}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* SELETOR DE DIA E INGRESSOS INTEIRA/MEIA PARA EVENTOS */}
                 {tipo === 'evento' && (
                   <div className="p-4 rounded-2xl bg-pink-50/70 border border-[#D81B60]/30 space-y-3">
@@ -527,6 +787,47 @@ export default function InscricaoPublica() {
                   </div>
                 )}
 
+                {alunoExistente && (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-950 flex items-center gap-2">
+                    <UserCheck size={18} className="text-emerald-600 shrink-0" />
+                    <span>
+                      <strong>Cadastro de aluno(a) identificado!</strong> Sua matrícula será vinculada diretamente ao seu perfil de <strong>{alunoExistente.nome}</strong> sem criar duplicidade.
+                    </span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">
+                      CPF (Busca cadastro existente)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="000.000.000-00"
+                      value={cpf}
+                      onChange={(e) => {
+                        setCpf(e.target.value);
+                        if (limparCpf(e.target.value).length === 11) {
+                          verificarAlunoPrincipal(e.target.value, email);
+                        }
+                      }}
+                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">E-mail</label>
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onBlur={() => verificarAlunoPrincipal(cpf, email)}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Nome Completo</label>
                   <input
@@ -562,30 +863,6 @@ export default function InscricaoPublica() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">CPF</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="000.000.000-00"
-                      value={cpf}
-                      onChange={(e) => setCpf(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">E-mail</label>
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
-                    />
-                  </div>
-                </div>
-
                 <div>
                   <label className="block text-xs font-bold uppercase text-zinc-600 mb-1">Endereço</label>
                   <input
@@ -597,6 +874,99 @@ export default function InscricaoPublica() {
                     className="w-full rounded-xl border border-zinc-300 p-2.5 text-sm"
                   />
                 </div>
+
+                {/* DADOS DO(A) PARCEIRO(A) SE FOR MODALIDADE CASAL */}
+                {tipo === 'curso' && modalidadeInscricao === 'casal' && (
+                  <div className="p-4 rounded-2xl bg-zinc-50 border-2 border-[#D81B60]/40 space-y-3">
+                    <p className="text-xs font-bold uppercase text-[#4A041C] flex items-center gap-1.5">
+                      <Users size={15} className="text-[#D81B60]" /> Dados do(a) Parceiro(a) da Dupla
+                    </p>
+
+                    {parceiroExistente && (
+                      <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-[11px] text-emerald-950 flex items-center gap-2">
+                        <UserCheck size={15} className="text-emerald-600 shrink-0" />
+                        <span>
+                          <strong>Aluno(a) identificado(a):</strong> {parceiroExistente.nome} já possui cadastro no Studio!
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                          CPF do(a) Parceiro(a)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="000.000.000-00"
+                          value={cpfParceiro}
+                          onChange={(e) => {
+                            setCpfParceiro(e.target.value);
+                            if (limparCpf(e.target.value).length === 11) {
+                              verificarParceiro(e.target.value, emailParceiro);
+                            }
+                          }}
+                          className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                          E-mail do(a) Parceiro(a)
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          value={emailParceiro}
+                          onBlur={() => verificarParceiro(cpfParceiro, emailParceiro)}
+                          onChange={(e) => setEmailParceiro(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                        Nome Completo do(a) Parceiro(a)
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={nomeParceiro}
+                        onChange={(e) => setNomeParceiro(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                          WhatsApp do(a) Parceiro(a)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="(68) 99999-9999"
+                          value={telefoneParceiro}
+                          onChange={(e) => setTelefoneParceiro(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                          Data de Nascimento
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={dataNascimentoParceiro}
+                          onChange={(e) => setDataNascimentoParceiro(e.target.value)}
+                          className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="pt-2">
                   <button
@@ -618,9 +988,15 @@ export default function InscricaoPublica() {
                     <p className="text-3xl font-bold font-condensed text-[#4A041C]">
                       R$ {valorTotalCalculado.toFixed(2).replace('.', ',')}
                     </p>
-                    {tipo === 'evento' && (
+                    {tipo === 'evento' ? (
                       <span className="text-xs text-zinc-500">
                         {qtdInteira} Inteira(s) + {qtdMeia} Meia(s)
+                      </span>
+                    ) : (
+                      <span className="text-xs text-zinc-500">
+                        {modalidadeInscricao === 'casal'
+                          ? `Inscrição em Casal (${nome} & ${nomeParceiro})`
+                          : `Inscrição Individual (${nome})`}
                       </span>
                     )}
                   </div>
@@ -632,7 +1008,7 @@ export default function InscricaoPublica() {
                   </button>
                 </div>
 
-                {/* BOTÃO OFICIAL CHECKOUT MERCADO PAGO (PIX AUTOMÁTICO + CARTÃO) */}
+                {/* BOTÃO OFICIAL CHECKOUT MERCADO PAGO */}
                 <div className="p-4 rounded-2xl bg-sky-50 border border-sky-300 space-y-2.5">
                   <p className="text-xs font-bold uppercase text-sky-950">
                     Opção 1: Checkout Automático Mercado Pago (PIX ou Cartão)
@@ -677,7 +1053,7 @@ export default function InscricaoPublica() {
 
                   <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
                     <p className="text-[11px] font-bold uppercase text-amber-900 flex items-center gap-1">
-                      <AlertCircle size={14} /> Cole o ID da transação PIX para emitir o QR Code:
+                      <AlertCircle size={14} /> Cole o ID da transação PIX para emitir o comprovante:
                     </p>
                     <input
                       type="text"
@@ -693,14 +1069,14 @@ export default function InscricaoPublica() {
                       className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-3 text-xs font-bold uppercase tracking-wider text-white transition"
                     >
                       <QrCode size={16} />
-                      {processando ? 'Validando...' : 'Confirmar PIX & Gerar QR Code'}
+                      {processando ? 'Validando...' : 'Confirmar PIX & Concluir Inscrição'}
                     </button>
                   </div>
                 </div>
 
                 <p className="text-[11px] text-center text-zinc-500 flex items-center justify-center gap-1">
                   <ShieldCheck size={14} className="text-emerald-600" />
-                  O ingresso QR Code é validado automaticamente após confirmação.
+                  A matrícula e o QR Code são liberados imediatamente após confirmação.
                 </p>
               </div>
             )}
