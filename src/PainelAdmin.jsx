@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Send,
   CheckCircle2,
+  FileCheck2,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
@@ -216,9 +217,9 @@ export default function PainelAdmin() {
     { id: 'usuarios', label: 'Alunos, Bolsistas & Profs', icon: Users },
     { id: 'cursos', label: 'Cursos & Turmas', icon: BookOpen },
     { id: 'bolsistas_admin', label: 'Bolsistas & Pareceres', icon: Award },
+    { id: 'solicitacoes_bolsa', label: 'Solicitações de Bolsa', icon: FileCheck2 },
     { id: 'eventos', label: 'Eventos', icon: Calendar },
     { id: 'financeiro', label: 'Financeiro & Lucros', icon: DollarSign },
-    { id: 'solicitacoes_bolsa', label: 'Solicitações de Bolsa', icon: FileCheck2 },
   ];
 
   return (
@@ -269,11 +270,11 @@ export default function PainelAdmin() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex gap-2 overflow-x-auto pb-3 pt-1">
           {abas.map((tab) => {
             const Icone = tab.icon;
-            const ativa = abaAtiva === tab.id;
+            const ativa =  === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setAbaAtiva(tab.id)}
+                onClick={() => set(tab.id)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider whitespace-nowrap transition ${
                   ativa
                     ? 'bg-[#4A041C] text-white shadow-sm'
@@ -513,6 +514,8 @@ export default function PainelAdmin() {
             usuarios={usuarios}
             recarregar={carregarTudo}
           />
+        ) : abaAtiva === 'solicitacoes_bolsa' ? (
+          <AdminSolicitacoesBolsa recarregarGeral={carregarTudo} />
         ) : (
           <AdminGestao
             aba={abaAtiva}
