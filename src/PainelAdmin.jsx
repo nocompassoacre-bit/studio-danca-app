@@ -20,6 +20,7 @@ import { db } from './firebase';
 import { useAuth } from './AuthContext';
 import AdminFinanceiro from './AdminFinanceiro';
 import AdminGestao from './AdminGestao';
+import AdminSolicitacoesBolsa from './AdminSolicitacoesBolsa';
 
 export default function PainelAdmin() {
   const { userData, logout } = useAuth();
