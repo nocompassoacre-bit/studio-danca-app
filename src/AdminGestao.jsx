@@ -185,7 +185,7 @@ export default function AdminGestao({
 
   // Vigência específica da Bolsa
   const [dataEntradaBolsa, setDataEntradaBolsa] = useState(new Date().toISOString().split('T')[0]);
-  const [vigenciaBolsaMeses, setVigenciaBolsaMeses] = useState('6');
+  const [vigenciaBolsaMeses, setVigenciaBolsaMeses] = useState('12');
   const [dataFimBolsaCustom, setDataFimBolsaCustom] = useState('');
 
   // Estados para Menor de 15 anos
@@ -305,7 +305,7 @@ export default function AdminGestao({
     setEndereco('');
     setContatoEmergencia('');
     setDataEntradaBolsa(new Date().toISOString().split('T')[0]);
-    setVigenciaBolsaMeses('6');
+    setVigenciaBolsaMeses('12');
     setDataFimBolsaCustom('');
     setTipoResponsavel('Mãe');
     setNomeResponsavel('');
@@ -329,7 +329,7 @@ export default function AdminGestao({
     setEndereco(u.endereco || '');
     setContatoEmergencia(u.contatoEmergencia || '');
     setDataEntradaBolsa(u.dataEntradaBolsa || new Date().toISOString().split('T')[0]);
-    setVigenciaBolsaMeses(String(u.vigenciaBolsaMeses || '6'));
+    setVigenciaBolsaMeses(String(u.vigenciaBolsaMeses || '12'));
     setDataFimBolsaCustom(u.dataFimBolsa || '');
     setTipoResponsavel(u.tipoResponsavel || 'Mãe');
     setNomeResponsavel(u.nomeResponsavel || '');
