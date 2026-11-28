@@ -20,10 +20,8 @@ import {
   CheckCircle2,
   XCircle,
   Search,
-  Calendar,
   Instagram,
   Phone,
-  FileText,
   Trash2,
   Eye,
   X,
@@ -204,6 +202,29 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
       carregarDados();
     } catch (err) {
       alert('Erro ao excluir edital: ' + err.message);
+    }
+  };
+
+  const handleExcluirSolicitacao = async (sol) => {
+    if (
+      !window.confirm(
+        `Deseja excluir permanentemente a solicitação de "${sol.nome}" (${sol.protocolo})?\n\nEsta ação remove o registro de teste do histórico.`
+      )
+    ) {
+      return;
+    }
+
+    setProcessandoId(sol.id);
+    try {
+      await deleteDoc(doc(db, 'solicitacoes_bolsa', sol.id));
+      if (candidatoAberto?.id === sol.id) {
+        setCandidatoAberto(null);
+      }
+      carregarDados();
+    } catch (err) {
+      alert('Erro ao excluir solicitação: ' + err.message);
+    } finally {
+      setProcessandoId('');
     }
   };
 
@@ -495,7 +516,6 @@ Direção — Studio de Dança No Compasso`;
         dataAvaliacaoStatus: new Date().toISOString(),
       });
 
-      // Dispara e-mail avisando que o acesso ao Portal do Bolsista foi liberado
       await enviarEmailSistema({
         to: sol.email,
         subject: `Parabéns! Você foi aprovado(a) na Seleção de Bolsistas — Studio No Compasso`,
@@ -877,8 +897,6 @@ Direção — Studio de Dança No Compasso`;
                       >
                         <Trash2 size={14} />
                       </button>
-                        {aberto ? <Lock size={14} /> : <Unlock size={14} />}
-                      </button>
                     </div>
                   </div>
                 );
@@ -1053,6 +1071,16 @@ Direção — Studio de Dança No Compasso`;
                     </button>
                   </>
                 )}
+
+                <button
+                  type="button"
+                  disabled={processandoId === sol.id}
+                  onClick={() => handleExcluirSolicitacao(sol)}
+                  title="Excluir registro do histórico"
+                  className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-2 text-xs font-bold uppercase text-red-600"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
             </div>
           ))}
@@ -1164,34 +1192,45 @@ Direção — Studio de Dança No Compasso`;
               )}
             </div>
 
-            {candidatoAberto.status === 'pendente' && (
-              <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-zinc-200">
-                <button
-                  type="button"
-                  disabled={processandoId === candidatoAberto.id}
-                  onClick={() => handleEnviarLembreteIndividual(candidatoAberto)}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 py-3 text-xs font-bold uppercase text-white"
-                >
-                  <Mail size={16} /> Enviar Lembrete E-mail
-                </button>
-                <button
-                  type="button"
-                  disabled={processandoId === candidatoAberto.id}
-                  onClick={() => handleAprovarCandidato(candidatoAberto)}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-3 text-xs font-bold uppercase text-white"
-                >
-                  <CheckCircle2 size={16} /> Aprovar & Habilitar Acesso
-                </button>
-                <button
-                  type="button"
-                  disabled={processandoId === candidatoAberto.id}
-                  onClick={() => handleReprovarCandidato(candidatoAberto)}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-700 px-5 py-3 text-xs font-bold uppercase text-white"
-                >
-                  <XCircle size={16} /> Não Aprovar
-                </button>
-              </div>
-            )}
+            <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-zinc-200">
+              {candidatoAberto.status === 'pendente' && (
+                <>
+                  <button
+                    type="button"
+                    disabled={processandoId === candidatoAberto.id}
+                    onClick={() => handleEnviarLembreteIndividual(candidatoAberto)}
+                    className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 py-3 text-xs font-bold uppercase text-white"
+                  >
+                    <Mail size={16} /> Enviar Lembrete E-mail
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processandoId === candidatoAberto.id}
+                    onClick={() => handleAprovarCandidato(candidatoAberto)}
+                    className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-3 text-xs font-bold uppercase text-white"
+                  >
+                    <CheckCircle2 size={16} /> Aprovar & Habilitar Acesso
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processandoId === candidatoAberto.id}
+                    onClick={() => handleReprovarCandidato(candidatoAberto)}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-700 px-5 py-3 text-xs font-bold uppercase text-white"
+                  >
+                    <XCircle size={16} /> Não Aprovar
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                disabled={processandoId === candidatoAberto.id}
+                onClick={() => handleExcluirSolicitacao(candidatoAberto)}
+                className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 px-5 py-3 text-xs font-bold uppercase text-red-600"
+              >
+                <Trash2 size={16} /> Excluir Registro
+              </button>
+            </div>
           </div>
         </div>
       )}
