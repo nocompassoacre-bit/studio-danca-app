@@ -184,6 +184,29 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
     carregarDados();
   };
 
+  const excluirEdital = async (ed) => {
+    const qtdInscritosNeste = solicitacoes.filter((s) => s.editalId === ed.id).length;
+    const avisoExtra =
+      qtdInscritosNeste > 0
+        ? `\n\n⚠️ Atenção: existem ${qtdInscritosNeste} inscrição(ões) vinculada(s) a este edital (elas continuarão salvas no histórico).`
+        : '';
+
+    if (
+      !window.confirm(
+        `Deseja excluir permanentemente o link "${ed.titulo}"?${avisoExtra}`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(db, 'editais_bolsa', ed.id));
+      carregarDados();
+    } catch (err) {
+      alert('Erro ao excluir edital: ' + err.message);
+    }
+  };
+
   const copiarLinkPublico = (edId) => {
     const url = `${window.location.origin}/selecao-bolsa/${edId}`;
     navigator.clipboard.writeText(url);
@@ -844,6 +867,16 @@ Direção — Studio de Dança No Compasso`;
                         title={aberto ? 'Encerrar inscrições' : 'Reabrir inscrições'}
                         className="p-1.5 rounded-lg border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
                       >
+                        {aberto ? <Lock size={14} /> : <Unlock size={14} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => excluirEdital(ed)}
+                        title="Excluir este link/edital"
+                        className="p-1.5 rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                         {aberto ? <Lock size={14} /> : <Unlock size={14} />}
                       </button>
                     </div>
