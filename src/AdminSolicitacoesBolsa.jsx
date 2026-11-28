@@ -5,77 +5,90 @@ import {
   collection,
   getDocs,
   addDoc,
-  doc,
   updateDoc,
+  doc,
   setDoc,
+  deleteDoc,
 } from 'firebase/firestore';
 import {
   Award,
-  Link2,
-  Copy,
-  Check,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  FileText,
-  UserCheck,
-  History,
-  Eye,
-  X,
   PlusCircle,
-  MessageCircle,
-  Search,
+  Link2,
+  Check,
   Lock,
   Unlock,
+  CheckCircle2,
+  XCircle,
+  Search,
+  Calendar,
+  Instagram,
+  Phone,
+  FileText,
+  Trash2,
+  Eye,
+  X,
   FileSpreadsheet,
+  Mail,
+  Bell,
+  Edit3,
+  Plus,
 } from 'lucide-react';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
+import { TEXTO_EDITAL_PADRAO, PERGUNTAS_PADRAO_EDITAL } from './InscricaoBolsaPublica';
 
 export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
   const { userData } = useAuth();
-  const [subAba, setSubAba] = useState('pendentes'); // pendentes | historico | editais
-  const [carregando, setCarregando] = useState(true);
-
   const [editais, setEditais] = useState([]);
   const [solicitacoes, setSolicitacoes] = useState([]);
-  const [fichaAberta, setFichaAberta] = useState(null);
-  const [busca, setBusca] = useState('');
-  const [filtroHistorico, setFiltroHistorico] = useState('todos'); // todos | aprovado | reprovado
-  const [processandoId, setProcessandoId] = useState('');
-  const [copiadoId, setCopiadoId] = useState('');
+  const [carregando, setCarregando] = useState(true);
 
-  // Formulário de Novo Edital
   const [mostrarFormEdital, setMostrarFormEdital] = useState(false);
   const [tituloEdital, setTituloEdital] = useState('Edital nº 02/2026 — Bolsas Dança de Salão');
-  const [dataInicioBolsa, setDataInicioBolsa] = useState('2027-01-11');
-  const [dataFimBolsa, setDataFimBolsa] = useState('2027-07-11');
-  const [vigenciaMeses, setVigenciaMeses] = useState(6);
   const [dataAvaliacao, setDataAvaliacao] = useState(
     '09 de janeiro de 2027 (sábado), das 14h às 16h'
   );
-  const [criandoEdital, setCriandoEdital] = useState(false);
+  const [dataInicioBolsa, setDataInicioBolsa] = useState('2027-01-11');
+  const [vigenciaMeses, setVigenciaMeses] = useState('6');
+  const [textoEdital, setTextoEdital] = useState(TEXTO_EDITAL_PADRAO);
+
+  // Construtor / Editor de perguntas antes de publicar o edital
+  const [perguntasEdital, setPerguntasEdital] = useState(() =>
+    PERGUNTAS_PADRAO_EDITAL.map((p) => ({ ...p }))
+  );
+  const [novaPerguntaTexto, setNovaPerguntaTexto] = useState('');
+  const [novaPerguntaTipo, setNovaPerguntaTipo] = useState('textarea');
+  const [novaPerguntaOpcoes, setNovaPerguntaOpcoes] = useState('');
+  const [novaPerguntaObrigatoria, setNovaPerguntaObrigatoria] = useState(true);
+
+  const [copiadoId, setCopiadoId] = useState('');
+  const [filtroStatus, setFiltroStatus] = useState('pendente');
+  const [busca, setBusca] = useState('');
+  const [candidatoAberto, setCandidatoAberto] = useState(null);
+  const [processandoId, setProcessandoId] = useState('');
+  const [enviandoLembreteGeral, setEnviandoLembreteGeral] = useState(false);
 
   const carregarDados = async () => {
     setCarregando(true);
     try {
-      const [edSnap, solSnap] = await Promise.all([
+      const [snapEditais, snapSolic] = await Promise.all([
         getDocs(collection(db, 'editais_bolsa')),
         getDocs(collection(db, 'solicitacoes_bolsa')),
       ]);
 
-      const listaEditais = edSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+      setEditais(
+        snapEditais.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))
+      );
 
-      const listaSolicitacoes = solSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (b.dataInscricao || '').localeCompare(a.dataInscricao || ''));
-
-      setEditais(listaEditais);
-      setSolicitacoes(listaSolicitacoes);
+      setSolicitacoes(
+        snapSolic.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.dataInscricao || '').localeCompare(a.dataInscricao || ''))
+      );
     } catch (err) {
-      console.error('Erro ao carregar solicitações de bolsa:', err);
+      console.error('Erro ao carregar seleções de bolsa:', err);
     } finally {
       setCarregando(false);
     }
@@ -85,54 +98,313 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
     carregarDados();
   }, []);
 
+  // Funções de edição/exclusão de perguntas antes de publicar o Edital
+  const editarEnunciadoPergunta = (idx, novoTexto) => {
+    setPerguntasEdital((prev) =>
+      prev.map((p, i) => (i === idx ? { ...p, enunciado: novoTexto } : p))
+    );
+  };
+
+  const alternarObrigatoriaPergunta = (idx) => {
+    setPerguntasEdital((prev) =>
+      prev.map((p, i) => (i === idx ? { ...p, obrigatoria: !p.obrigatoria } : p))
+    );
+  };
+
+  const excluirPerguntaEdital = (idx) => {
+    setPerguntasEdital((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const adicionarNovaPerguntaEdital = () => {
+    if (!novaPerguntaTexto.trim()) return;
+    const opcoesArr =
+      novaPerguntaTipo === 'select'
+        ? novaPerguntaOpcoes
+            .split(',')
+            .map((o) => o.trim())
+            .filter(Boolean)
+        : [];
+
+    if (novaPerguntaTipo === 'select' && opcoesArr.length < 2) {
+      alert('Para perguntas de múltipla escolha, informe pelo menos 2 opções separadas por vírgula.');
+      return;
+    }
+
+    setPerguntasEdital((prev) => [
+      ...prev,
+      {
+        id: `custom_${Date.now()}`,
+        enunciado: novaPerguntaTexto.trim(),
+        tipo: novaPerguntaTipo,
+        obrigatoria: novaPerguntaObrigatoria,
+        opcoes: opcoesArr,
+      },
+    ]);
+    setNovaPerguntaTexto('');
+    setNovaPerguntaOpcoes('');
+  };
+
   const handleCriarEdital = async (e) => {
     e.preventDefault();
-    setCriandoEdital(true);
+    if (perguntasEdital.length === 0) {
+      alert('Mantenha pelo menos 1 pergunta no formulário do edital.');
+      return;
+    }
+
+    const fimObj = new Date(dataInicioBolsa + 'T00:00:00');
+    fimObj.setMonth(fimObj.getMonth() + Number(vigenciaMeses || 6));
+    const dataFimIso = !isNaN(fimObj.getTime())
+      ? fimObj.toISOString().split('T')[0]
+      : '2027-07-11';
+
     try {
       await addDoc(collection(db, 'editais_bolsa'), {
         titulo: tituloEdital.trim(),
-        dataInicioBolsa,
-        dataFimBolsa,
-        vigenciaMeses: Number(vigenciaMeses || 6),
         dataAvaliacao: dataAvaliacao.trim(),
+        dataInicioBolsa,
+        dataFimBolsa: dataFimIso,
+        vigenciaMeses: Number(vigenciaMeses || 6),
+        textoEdital,
+        perguntas: perguntasEdital,
         status: 'aberto',
-        criadoPor: userData?.nome || 'Coordenação Geral',
+        criadoPor: userData?.nome || 'Coordenação',
         criadoEm: new Date().toISOString(),
       });
       setMostrarFormEdital(false);
-      await carregarDados();
-      alert('✅ Edital publicado! Copie o link abaixo para divulgar ao público.');
+      alert('Edital publicado e link público gerado com sucesso!');
+      carregarDados();
     } catch (err) {
-      alert('Erro ao criar edital: ' + err.message);
-    } finally {
-      setCriandoEdital(false);
+      alert('Erro ao publicar edital: ' + err.message);
     }
   };
 
   const alternarStatusEdital = async (ed) => {
-    const novoStatus = ed.status === 'encerrado' ? 'aberto' : 'encerrado';
-    try {
-      await updateDoc(doc(db, 'editais_bolsa', ed.id), {
-        status: novoStatus,
-      });
-      carregarDados();
-    } catch (err) {
-      alert('Erro ao alterar status do edital: ' + err.message);
-    }
+    const novoStatus = ed.status === 'aberto' ? 'encerrado' : 'aberto';
+    await updateDoc(doc(db, 'editais_bolsa', ed.id), { status: novoStatus });
+    carregarDados();
   };
 
-  const copiarLinkEdital = (id) => {
-    const url = `${window.location.origin}/selecao-bolsa/${id}`;
+  const copiarLinkPublico = (edId) => {
+    const url = `${window.location.origin}/selecao-bolsa/${edId}`;
     navigator.clipboard.writeText(url);
-    setCopiadoId(id);
+    setCopiadoId(edId);
     setTimeout(() => setCopiadoId(''), 2500);
   };
 
-  // APROVAR CANDIDATO -> LANÇA AUTOMATICAMENTE NA ABA DE BOLSISTAS (USERS)
+  const enviarEmailSistema = async ({ to, subject, text, tipo, protocolo, nome }) => {
+    await addDoc(collection(db, 'comunicados_email'), {
+      tipo,
+      destinatarioEmail: to,
+      destinatarioNome: nome,
+      protocolo: protocolo || '',
+      assunto: subject,
+      mensagem: text,
+      statusEnvio: 'enviado',
+      criadoEm: new Date().toISOString(),
+    });
+
+    const resp = await fetch('/api/enviar-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject, text }),
+    }).catch(() => null);
+
+    return resp;
+  };
+
+  const handleEnviarLembreteIndividual = async (sol) => {
+    setProcessandoId(sol.id);
+    try {
+      const dataEncontro =
+        sol.dataAvaliacaoPresencial || '09 de janeiro de 2027 (sábado), das 14h às 16h';
+      const assunto = `Lembrete: Avaliação Presencial de Bolsistas — ${sol.editalTitulo}`;
+      const texto = `Olá, ${sol.nome}!
+
+Passando para lembrar da sua etapa de Avaliação Presencial no processo seletivo "${sol.editalTitulo}" (Protocolo: ${sol.protocolo}).
+
+📅 Data e Horário: ${dataEncontro}
+📍 Local: Studio de Dança No Compasso (Estrada das Placas, 1909 — Rio Branco/AC).
+
+Chegue com 15 minutos de antecedência usando roupas confortáveis para dançar. Lembramos que o não comparecimento elimina automaticamente o candidato.
+
+Nos vemos lá!
+Direção — Studio de Dança No Compasso`;
+
+      await enviarEmailSistema({
+        to: sol.email,
+        subject: assunto,
+        text: texto,
+        tipo: 'lembrete_bolsa',
+        protocolo: sol.protocolo,
+        nome: sol.nome,
+      });
+
+      await updateDoc(doc(db, 'solicitacoes_bolsa', sol.id), {
+        ultimoLembreteEnviadoEm: new Date().toISOString(),
+      });
+
+      alert(`✅ Lembrete enviado por e-mail para ${sol.nome} (${sol.email})!`);
+      carregarDados();
+    } catch (err) {
+      alert('Erro ao enviar lembrete: ' + err.message);
+    } finally {
+      setProcessandoId('');
+    }
+  };
+
+  const handleEnviarLembreteTodosPendentes = async () => {
+    const pendentes = solicitacoes.filter((s) => s.status === 'pendente' && s.email);
+    if (pendentes.length === 0) {
+      alert('Não há candidatos pendentes para receber lembrete.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Deseja disparar agora o e-mail de lembrete do encontro presencial para todos os ${pendentes.length} candidato(s) pendente(s)?`
+      )
+    ) {
+      return;
+    }
+
+    setEnviandoLembreteGeral(true);
+    try {
+      for (const sol of pendentes) {
+        const dataEncontro =
+          sol.dataAvaliacaoPresencial || '09 de janeiro de 2027 (sábado), das 14h às 16h';
+        const assunto = `Lembrete: Avaliação Presencial de Bolsistas — ${sol.editalTitulo}`;
+        const texto = `Olá, ${sol.nome}!
+
+Este é um lembrete oficial da sua Avaliação Presencial no processo seletivo "${sol.editalTitulo}" (Protocolo: ${sol.protocolo}).
+
+📅 Data e Horário: ${dataEncontro}
+📍 Local: Studio de Dança No Compasso (Estrada das Placas, 1909 — Rio Branco/AC).
+
+Vá com roupas confortáveis para praticar e chegue com 15 minutos de antecedência.
+
+Atenciosamente,
+Direção — Studio de Dança No Compasso`;
+
+        await enviarEmailSistema({
+          to: sol.email,
+          subject: assunto,
+          text: texto,
+          tipo: 'lembrete_bolsa_lote',
+          protocolo: sol.protocolo,
+          nome: sol.nome,
+        });
+
+        await updateDoc(doc(db, 'solicitacoes_bolsa', sol.id), {
+          ultimoLembreteEnviadoEm: new Date().toISOString(),
+        });
+      }
+
+      alert(`✅ Lembretes enviados com sucesso para ${pendentes.length} candidato(s)!`);
+      carregarDados();
+    } catch (err) {
+      alert('Erro no envio em lote: ' + err.message);
+    } finally {
+      setEnviandoLembreteGeral(false);
+    }
+  };
+
+  const abrirWhatsAppLembrete = (sol) => {
+    const foneLimpo = (sol.telefone || '').replace(/\D/g, '');
+    const dataEncontro =
+      sol.dataAvaliacaoPresencial || '09/01/2027 (sábado), das 14h às 16h';
+    const msg = `Olá, *${sol.nome}*! Passando para lembrar da sua Avaliação Presencial de Bolsistas do *No Compasso Studio de Dança* (Protocolo *${sol.protocolo}*).\n\n📅 *Data/Hora:* ${dataEncontro}\n📍 *Local:* Estrada das Placas, 1909.\n\nVá com roupa confortável para dançar! Até lá!`;
+    window.open(`https://wa.me/55${foneLimpo}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  const exportarPlanilhaSolicitacoes = () => {
+    if (solicitacoes.length === 0) {
+      alert('Nenhuma solicitação registrada para exportar.');
+      return;
+    }
+
+    const cabecalhos = [
+      'Protocolo',
+      'Edital',
+      'Status',
+      'Acesso Portal',
+      'Data Inscricao',
+      'Nome Completo',
+      'CPF',
+      'Data Nascimento',
+      'Idade',
+      'WhatsApp',
+      'E-mail',
+      'Instagram',
+      'Endereco',
+      'Responsavel Legal',
+      'Contato Responsavel',
+      'Nivel Conhecimento',
+      'Experiencia Danca',
+      'Conhece Studio',
+      'Como Soube',
+      'Motivacao',
+      'Como Pode Colaborar',
+      'Observacoes Extras',
+      'Sabado Livre',
+      'Dias Uteis Disponiveis',
+      'Estilos de Interesse',
+    ];
+
+    const escaparCsv = (valor) => {
+      if (valor === null || valor === undefined) return '""';
+      const str = Array.isArray(valor) ? valor.join(' | ') : String(valor);
+      return `"${str.replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+    };
+
+    const linhas = solicitacoes.map((s) =>
+      [
+        s.protocolo || '',
+        s.editalTitulo || '',
+        (s.status || 'pendente').toUpperCase(),
+        s.acessoPortalHabilitado ? 'HABILITADO' : 'BLOQUEADO',
+        s.dataInscricao ? new Date(s.dataInscricao).toLocaleString('pt-BR') : '',
+        s.nome || '',
+        s.cpf || '',
+        s.dataNascimento || '',
+        s.idadeInscricao || '',
+        s.telefone || '',
+        s.email || '',
+        s.instagram || '',
+        s.endereco || '',
+        s.nomeResponsavelLegal || '',
+        s.telefoneResponsavelLegal || '',
+        s.conhecimentoPrevio || '',
+        s.experienciaSalao || '',
+        s.conheceStudio || '',
+        s.comoSoube || '',
+        s.motivacaoStudio || '',
+        s.comoPodeColaborar || '',
+        s.observacoesExtras || '',
+        s.disponibilidadeSabado ? 'Sim' : 'Não',
+        s.diasUteisDisponiveis || [],
+        s.estilosInteresse || [],
+      ]
+        .map(escaparCsv)
+        .join(';')
+    );
+
+    const conteudoCsv = '\uFEFF' + [cabecalhos.join(';'), ...linhas].join('\r\n');
+    const blob = new Blob([conteudoCsv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `solicitacoes-bolsa-nocompasso-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // APROVAR CANDIDATO: habilita o usuário e a senha que ele escolheu na inscrição
   const handleAprovarCandidato = async (sol) => {
     if (
       !window.confirm(
-        `Confirma a APROVAÇÃO de "${sol.nome}" como Bolsista?\n\nO cadastro será criado automaticamente na aba de Bolsistas com vigência de ${sol.dataInicioBolsaPrevista || '2027-01-11'} até ${sol.dataFimBolsaPrevista || '2027-07-11'}.`
+        `Confirmar APROVAÇÃO de "${sol.nome}"?\n\nIsso habilitará o login (${sol.email}) com a senha criada na inscrição e ativará o perfil de Bolsista.`
       )
     ) {
       return;
@@ -146,80 +418,88 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
         authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
         projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
       };
-      secondaryApp = initializeApp(config, 'AprovarBolsista_' + Date.now());
+      secondaryApp = initializeApp(config, 'AprovacaoBolsa_' + Date.now());
       const secondaryAuth = getAuth(secondaryApp);
 
-      const cred = await createUserWithEmailAndPassword(
-        secondaryAuth,
-        sol.email,
-        sol.senhaInicialEscolhida || '123456'
-      );
+      const senhaHabilitada = sol.senhaInicialEscolhida || 'Mudar@123';
+      let uidCriado = '';
+
+      try {
+        const cred = await createUserWithEmailAndPassword(
+          secondaryAuth,
+          sol.email,
+          senhaHabilitada
+        );
+        uidCriado = cred.user.uid;
+      } catch (authErr) {
+        if (authErr.code !== 'auth/email-already-in-use') {
+          throw authErr;
+        }
+      }
 
       const dataEntrada = sol.dataInicioBolsaPrevista || '2027-01-11';
+      const meses = Number(sol.vigenciaMeses || 6);
       const dataFim = sol.dataFimBolsaPrevista || '2027-07-11';
 
-      const telefoneFormatado = sol.isMenorDe18
-        ? `${sol.telefone} | Resp: ${sol.nomeResponsavelLegal} (${sol.telefoneResponsavelLegal})`
-        : sol.telefone;
-
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        uid: cred.user.uid,
+      const docId = uidCriado || `bolsista_${Date.now()}`;
+      await setDoc(doc(db, 'users', docId), {
+        uid: uidCriado,
         nome: sol.nome,
         email: sol.email,
         emailExibicao: sol.email,
-        telefone: telefoneFormatado,
+        telefone: sol.telefone,
         telefoneRaw: sol.telefone,
-        cpf: sol.cpf || '',
-        dataNascimento: sol.dataNascimento || '',
+        cpf: sol.cpf,
+        dataNascimento: sol.dataNascimento,
+        endereco: sol.endereco,
         instagram: sol.instagram || '',
-        endereco: sol.endereco || '',
         fotoPerfilUrl: sol.fotoPerfilUrl || '',
         frentes: ['Dança de Salão'],
         role: 'bolsista',
         roles: ['bolsista'],
         dataEntradaBolsa: dataEntrada,
-        vigenciaBolsaMeses: Number(sol.vigenciaMeses || 6),
+        vigenciaBolsaMeses: meses,
         dataFimBolsa: dataFim,
-        dataInscricaoSelecao: sol.dataInscricao || new Date().toISOString(),
-        protocoloSelecao: sol.protocolo || '',
-        editalOrigem: sol.editalTitulo || '',
+        protocoloSelecao: sol.protocolo,
         status: 'ativo',
         criadoEm: new Date().toISOString(),
       });
 
       await updateDoc(doc(db, 'solicitacoes_bolsa', sol.id), {
         status: 'aprovado',
-        usuarioCriadoUid: cred.user.uid,
-        avaliadoPor: userData?.nome || 'Coordenação Geral',
-        dataAvaliacaoResultado: new Date().toISOString(),
-        motivoResultado: 'Aprovado na seleção presencial',
+        acessoPortalHabilitado: true,
+        avaliadoPor: userData?.nome || 'Coordenação',
+        dataAvaliacaoStatus: new Date().toISOString(),
       });
 
+      // Dispara e-mail avisando que o acesso ao Portal do Bolsista foi liberado
+      await enviarEmailSistema({
+        to: sol.email,
+        subject: `Parabéns! Você foi aprovado(a) na Seleção de Bolsistas — Studio No Compasso`,
+        text: `Olá, ${sol.nome}!\n\nÉ com alegria que informamos a sua APROVAÇÃO no processo seletivo "${sol.editalTitulo}"!\n\nSeu acesso ao Portal do Bolsista já está HABILITADO com o e-mail e a senha que você cadastrou na inscrição:\nLink de acesso: ${window.location.origin}/login\nUsuário: ${sol.email}\n\nNos vemos nos ensaios e turmas!\nDireção — Studio de Dança No Compasso`,
+        tipo: 'aprovacao_bolsa',
+        protocolo: sol.protocolo,
+        nome: sol.nome,
+      }).catch(() => {});
+
       alert(
-        `✅ ${sol.nome} aprovado(a) com sucesso! O cadastro já aparece na aba "Alunos, Bolsistas & Profs" e em "Bolsistas & Pareceres".`
+        `✅ ${sol.nome} foi APROVADO(A)!\n\nO usuário (${sol.email}) e a senha escolhida na inscrição foram habilitados e o e-mail de boas-vindas foi enviado.`
       );
-      setFichaAberta(null);
+      setCandidatoAberto(null);
       await carregarDados();
       if (recarregarGeral) recarregarGeral();
     } catch (err) {
-      if (err.code === 'auth/email-already-in-use') {
-        alert(
-          'Este e-mail já possui uma conta cadastrada no sistema! Você pode editar o usuário existente na aba "Alunos, Bolsistas & Profs" e marcar o rótulo "Bolsista".'
-        );
-      } else {
-        alert('Erro ao aprovar candidato: ' + err.message);
-      }
+      alert('Erro ao aprovar candidato: ' + err.message);
     } finally {
       if (secondaryApp) await deleteApp(secondaryApp);
       setProcessandoId('');
     }
   };
 
-  // NÃO APROVAR (ELIMINAR) -> MOVE PARA HISTÓRICO DE SOLICITAÇÕES
   const handleReprovarCandidato = async (sol) => {
     const motivo = window.prompt(
-      `Informe o motivo da eliminação / não aprovação de "${sol.nome}" (ex: Faltou na avaliação presencial, Incompatibilidade de horário):`,
-      'Não selecionado / Eliminado na etapa presencial'
+      `Motivo da não aprovação / eliminação de ${sol.nome} (opcional):`,
+      'Não atingiu os critérios da avaliação presencial.'
     );
     if (motivo === null) return;
 
@@ -227,135 +507,42 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
     try {
       await updateDoc(doc(db, 'solicitacoes_bolsa', sol.id), {
         status: 'reprovado',
-        avaliadoPor: userData?.nome || 'Coordenação Geral',
-        dataAvaliacaoResultado: new Date().toISOString(),
-        motivoResultado: motivo.trim() || 'Não aprovado',
+        acessoPortalHabilitado: false,
+        motivoReprovacao: motivo,
+        avaliadoPor: userData?.nome || 'Coordenação',
+        dataAvaliacaoStatus: new Date().toISOString(),
       });
-
-      setFichaAberta(null);
-      await carregarDados();
+      setCandidatoAberto(null);
+      carregarDados();
     } catch (err) {
-      alert('Erro ao registrar eliminação: ' + err.message);
+      alert('Erro ao atualizar status: ' + err.message);
     } finally {
       setProcessandoId('');
     }
   };
 
-  const abrirWhatsAppCandidato = (sol, aprovado = false) => {
-    const foneLimpo = (sol.telefone || '').replace(/\D/g, '');
-    const fone = foneLimpo.startsWith('55') ? foneLimpo : `55${foneLimpo}`;
-    const texto = aprovado
-      ? `Olá, *${sol.nome}*! Parabéns! 🎉 Você foi *APROVADO(A)* no processo seletivo de Bolsistas do *Studio de Dança No Compasso* (${sol.editalTitulo})! Seu acesso ao portal já está ativo com seu e-mail cadastrado.`
-      : `Olá, *${sol.nome}*! Aqui é da direção do *Studio de Dança No Compasso* referente à sua inscrição (${sol.protocolo}) no ${sol.editalTitulo}.`;
-    window.open(`https://wa.me/${fone}?text=${encodeURIComponent(texto)}`, '_blank');
-  };
+  const solicitacoesFiltradas = solicitacoes.filter((s) => {
+    const bateStatus =
+      filtroStatus === 'todos'
+        ? true
+        : filtroStatus === 'historico'
+        ? s.status === 'aprovado' || s.status === 'reprovado'
+        : s.status === filtroStatus;
 
-  const exportarPlanilhaSolicitacoes = () => {
-    if (solicitacoes.length === 0) {
-      alert('Ainda não há inscrições registradas para exportar.');
-      return;
-    }
+    const termo = busca.toLowerCase();
+    const bateBusca =
+      !termo ||
+      (s.nome || '').toLowerCase().includes(termo) ||
+      (s.protocolo || '').toLowerCase().includes(termo) ||
+      (s.cpf || '').includes(termo);
 
-    const cabecalho = [
-      'Protocolo',
-      'Status',
-      'Data Inscrição',
-      'Edital',
-      'Nome Completo',
-      'CPF',
-      'Data Nascimento',
-      'Idade',
-      'Menor de 18?',
-      'Responsável Legal',
-      'Tel. Responsável',
-      'WhatsApp',
-      'E-mail',
-      'Instagram',
-      'Endereço',
-      'Conhecimento Prévio',
-      'Conhece o Studio',
-      'Como Soube',
-      'Experiência em Dança',
-      'Dias Úteis Disponíveis',
-      'Estilos de Interesse',
-      'Motivação',
-      'Como Pode Colaborar',
-      'Observações Extras',
-      'Avaliado Por',
-      'Motivo / Resultado',
-    ];
-
-    const escaparCsv = (valor) => {
-      const texto = String(valor ?? '')
-        .replace(/\r?\n|\r/g, ' ')
-        .replace(/"/g, '""');
-      return `"${texto}"`;
-    };
-
-    const linhas = solicitacoes.map((s) =>
-      [
-        s.protocolo,
-        s.status === 'aprovado'
-          ? 'APROVADO (BOLSISTA)'
-          : s.status === 'reprovado'
-          ? 'ELIMINADO'
-          : 'PENDENTE',
-        s.dataInscricao ? new Date(s.dataInscricao).toLocaleString('pt-BR') : '',
-        s.editalTitulo,
-        s.nome,
-        s.cpf,
-        s.dataNascimento ? s.dataNascimento.split('-').reverse().join('/') : '',
-        s.idadeInscricao,
-        s.isMenorDe18 ? 'Sim' : 'Não',
-        s.nomeResponsavelLegal,
-        s.telefoneResponsavelLegal,
-        s.telefone,
-        s.email,
-        s.instagram,
-        s.endereco,
-        s.conhecimentoPrevio,
-        s.conheceStudio,
-        s.comoSoube,
-        s.experienciaSalao,
-        Array.isArray(s.diasUteisDisponiveis) ? s.diasUteisDisponiveis.join(' | ') : '',
-        Array.isArray(s.estilosInteresse) ? s.estilosInteresse.join(' | ') : '',
-        s.motivacaoStudio,
-        s.comoPodeColaborar,
-        s.observacoesExtras,
-        s.avaliadoPor || '',
-        s.motivoResultado || '',
-      ]
-        .map(escaparCsv)
-        .join(';')
-    );
-
-    const conteudoCsv = '\uFEFF' + [cabecalho.map(escaparCsv).join(';'), ...linhas].join('\n');
-    const blob = new Blob([conteudoCsv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `inscricoes-bolsistas-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const pendentes = solicitacoes.filter(
-    (s) =>
-      s.status === 'pendente' &&
-      ((s.nome || '').toLowerCase().includes(busca.toLowerCase()) ||
-        (s.protocolo || '').toLowerCase().includes(busca.toLowerCase()))
-  );
-
-  const historico = solicitacoes.filter((s) => {
-    if (s.status === 'pendente') return false;
-    if (filtroHistorico !== 'todos' && s.status !== filtroHistorico) return false;
-    return (
-      (s.nome || '').toLowerCase().includes(busca.toLowerCase()) ||
-      (s.protocolo || '').toLowerCase().includes(busca.toLowerCase())
-    );
+    return bateStatus && bateBusca;
   });
+
+  const qtdPendentes = solicitacoes.filter((s) => s.status === 'pendente').length;
+  const qtdHistorico = solicitacoes.filter(
+    (s) => s.status === 'aprovado' || s.status === 'reprovado'
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -371,19 +558,21 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
             </h3>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setMostrarFormEdital((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#4A041C] hover:bg-[#D81B60] px-4 py-2.5 text-xs font-bold uppercase text-white transition"
-          >
-            <PlusCircle size={15} />
-            {mostrarFormEdital ? 'Fechar Formulário' : 'Abrir Novo Edital / Link Público'}
-          </button>
-        </div>
-
-        </div>
-
           <div className="flex flex-wrap items-center gap-2">
+            {qtdPendentes > 0 && (
+              <button
+                type="button"
+                disabled={enviandoLembreteGeral}
+                onClick={handleEnviarLembreteTodosPendentes}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-4 py-2.5 text-xs font-bold uppercase text-white transition"
+              >
+                <Bell size={15} />
+                {enviandoLembreteGeral
+                  ? 'Enviando Lembretes...'
+                  : `Lembrete Encontro (${qtdPendentes})`}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={exportarPlanilhaSolicitacoes}
@@ -404,95 +593,227 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
           </div>
         </div>
 
-        {/* FORMULÁRIO PARA CRIAR/ABRIR NOVO EDITAL */}
+        {/* FORMULÁRIO PARA CRIAR NOVO EDITAL + EDITAR/EXCLUIR PERGUNTAS */}
         {mostrarFormEdital && (
           <form
             onSubmit={handleCriarEdital}
-            className="p-4 rounded-2xl bg-pink-50/70 border border-[#D81B60]/30 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end"
+            className="p-5 rounded-2xl bg-pink-50/60 border border-[#D81B60]/30 space-y-5"
           >
-            <div className="sm:col-span-2">
-              <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
-                Título do Edital
-              </label>
-              <input
-                type="text"
-                required
-                value={tituloEdital}
-                onChange={(e) => setTituloEdital(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs font-semibold"
-              />
+            <h4 className="text-sm font-bold uppercase text-[#4A041C]">
+              Configurar Edital & Perguntas do Formulário de Inscrição
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                  Título do Edital *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={tituloEdital}
+                  onChange={(e) => setTituloEdital(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                  Data e Horário da Avaliação Presencial *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={dataAvaliacao}
+                  onChange={(e) => setDataAvaliacao(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm font-semibold"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                  Início Previsto da Bolsa
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={dataInicioBolsa}
+                  onChange={(e) => setDataInicioBolsa(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                  Vigência da Bolsa (Meses)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="36"
+                  required
+                  value={vigenciaMeses}
+                  onChange={(e) => setVigenciaMeses(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-sm"
+                />
+              </div>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
-                Início da Bolsa
+              <label className="block text-[11px] font-bold uppercase text-zinc-600 mb-1">
+                Texto Completo do Edital (Exibido na Seção 1)
               </label>
-              <input
-                type="date"
+              <textarea
+                rows="5"
                 required
-                value={dataInicioBolsa}
-                onChange={(e) => setDataInicioBolsa(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
+                value={textoEdital}
+                onChange={(e) => setTextoEdital(e.target.value)}
+                className="w-full rounded-xl border border-zinc-300 bg-white p-3 text-xs leading-relaxed"
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
-                Término da Bolsa
-              </label>
-              <input
-                type="date"
-                required
-                value={dataFimBolsa}
-                onChange={(e) => setDataFimBolsa(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
-              />
+            {/* EDITOR / EXCLUSÃO DE PERGUNTAS ANTES DE PUBLICAR */}
+            <div className="p-4 rounded-2xl bg-white border border-zinc-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase text-[#4A041C] flex items-center gap-1.5">
+                  <Edit3 size={14} className="text-[#D81B60]" /> Perguntas da Seção 3 ({perguntasEdital.length})
+                </p>
+                <span className="text-[10px] text-zinc-500">
+                  Edite o enunciado ou exclua perguntas antes de publicar
+                </span>
+              </div>
+
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {perguntasEdital.map((p, idx) => (
+                  <div
+                    key={p.id}
+                    className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 flex flex-col sm:flex-row sm:items-center gap-2"
+                  >
+                    <div className="flex-1 space-y-1">
+                      <input
+                        type="text"
+                        value={p.enunciado}
+                        onChange={(e) => editarEnunciadoPergunta(idx, e.target.value)}
+                        className="w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-900"
+                      />
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
+                        <span className="uppercase font-bold">
+                          Tipo: {p.tipo === 'select' ? 'Múltipla Escolha' : p.tipo === 'textarea' ? 'Texto Longo' : 'Texto Curto'}
+                        </span>
+                        {p.ocultarSeIniciante && (
+                          <span className="px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800 font-bold">
+                            Oculta se iniciante
+                          </span>
+                        )}
+                        {Array.isArray(p.opcoes) && p.opcoes.length > 0 && (
+                          <span>Opções: {p.opcoes.join(' • ')}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-center">
+                      <button
+                        type="button"
+                        onClick={() => alternarObrigatoriaPergunta(idx)}
+                        className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                          p.obrigatoria
+                            ? 'bg-pink-100 text-[#4A041C]'
+                            : 'bg-zinc-200 text-zinc-600'
+                        }`}
+                      >
+                        {p.obrigatoria ? 'Obrigatória' : 'Opcional'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => excluirPerguntaEdital(idx)}
+                        className="p-1.5 rounded-lg text-red-500 hover:bg-red-50"
+                        title="Excluir pergunta"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* ADICIONAR NOVA PERGUNTA CUSTOMIZADA */}
+              <div className="pt-3 border-t border-zinc-200 space-y-2">
+                <p className="text-[11px] font-bold uppercase text-zinc-600">
+                  + Adicionar Nova Pergunta ao Edital
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <input
+                    type="text"
+                    placeholder="Enunciado da nova pergunta..."
+                    value={novaPerguntaTexto}
+                    onChange={(e) => setNovaPerguntaTexto(e.target.value)}
+                    className="sm:col-span-6 rounded-lg border border-zinc-300 p-2 text-xs"
+                  />
+                  <select
+                    value={novaPerguntaTipo}
+                    onChange={(e) => setNovaPerguntaTipo(e.target.value)}
+                    className="sm:col-span-3 rounded-lg border border-zinc-300 p-2 text-xs font-semibold"
+                  >
+                    <option value="textarea">Texto Longo</option>
+                    <option value="text">Texto Curto</option>
+                    <option value="select">Múltipla Escolha</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={adicionarNovaPerguntaEdital}
+                    className="sm:col-span-3 inline-flex items-center justify-center gap-1 rounded-lg bg-[#4A041C] text-white text-xs font-bold uppercase py-2 hover:bg-[#D81B60]"
+                  >
+                    <Plus size={14} /> Incluir
+                  </button>
+                </div>
+
+                {novaPerguntaTipo === 'select' && (
+                  <input
+                    type="text"
+                    placeholder="Opções separadas por vírgula (Ex: Sim, Não, Outro)"
+                    value={novaPerguntaOpcoes}
+                    onChange={(e) => setNovaPerguntaOpcoes(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 p-2 text-xs"
+                  />
+                )}
+              </div>
             </div>
 
-            <div className="sm:col-span-3">
-              <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
-                Data e Horário da Avaliação Presencial
-              </label>
-              <input
-                type="text"
-                required
-                value={dataAvaliacao}
-                onChange={(e) => setDataAvaliacao(e.target.value)}
-                className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-xs"
-              />
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={criandoEdital}
-                className="w-full rounded-xl bg-[#D81B60] hover:bg-[#AD1457] py-2.5 text-xs font-bold uppercase text-white"
-              >
-                {criandoEdital ? 'Publicando...' : 'Publicar Edital'}
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="rounded-xl bg-[#D81B60] hover:bg-[#AD1457] px-6 py-2.5 text-xs font-bold uppercase text-white"
+            >
+              Publicar Edital & Gerar Link
+            </button>
           </form>
         )}
 
-        {/* LISTA RÁPIDA DE LINKS PÚBLICOS DOS EDITAIS */}
+        {/* LINKS PÚBLICOS ATIVOS */}
         {editais.length > 0 && (
-          <div className="space-y-2 pt-2 border-t border-zinc-200">
-            <span className="block text-[11px] font-bold uppercase text-zinc-500">
+          <div className="space-y-2 pt-2 border-t border-zinc-100">
+            <span className="text-[11px] font-bold uppercase text-zinc-500 block">
               Links Públicos de Inscrição ({editais.length})
             </span>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {editais.map((ed) => {
-                const linkPublico = `${window.location.origin}/selecao-bolsa/${ed.id}`;
-                const aberto = ed.status !== 'encerrado';
+                const url = `${window.location.origin}/selecao-bolsa/${ed.id}`;
+                const aberto = ed.status === 'aberto';
                 return (
                   <div
                     key={ed.id}
-                    className="p-3 rounded-xl border border-zinc-200 bg-zinc-50 flex flex-col justify-between gap-2 text-xs"
+                    className="p-3.5 rounded-xl border border-zinc-200 bg-zinc-50 flex flex-col justify-between gap-2.5"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <strong className="text-zinc-900">{ed.titulo}</strong>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <strong className="text-xs text-zinc-900 block">{ed.titulo}</strong>
+                        <span className="text-[11px] text-zinc-500">
+                          Avaliação: {ed.dataAvaliacao}
+                        </span>
+                      </div>
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 ${
                           aberto
                             ? 'bg-emerald-100 text-emerald-800'
                             : 'bg-red-100 text-red-700'
@@ -506,22 +827,22 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
                       <input
                         type="text"
                         readOnly
-                        value={linkPublico}
-                        className="flex-1 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-mono text-zinc-600"
+                        value={url}
+                        className="flex-1 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-mono text-zinc-700"
                       />
                       <button
                         type="button"
-                        onClick={() => copiarLinkEdital(ed.id)}
-                        className="inline-flex items-center gap-1 rounded-lg bg-[#4A041C] px-3 py-1.5 text-[11px] font-bold text-white hover:bg-[#D81B60]"
+                        onClick={() => copiarLinkPublico(ed.id)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#4A041C] hover:bg-[#D81B60] px-3 py-1.5 text-[11px] font-bold text-white"
                       >
-                        {copiadoId === ed.id ? <Check size={13} /> : <Copy size={13} />}
-                        {copiadoId === ed.id ? 'Copiado' : 'Copiar Link'}
+                        {copiadoId === ed.id ? <Check size={13} /> : <Link2 size={13} />}
+                        {copiadoId === ed.id ? 'Copiado!' : 'Copiar Link'}
                       </button>
                       <button
                         type="button"
                         onClick={() => alternarStatusEdital(ed)}
                         title={aberto ? 'Encerrar inscrições' : 'Reabrir inscrições'}
-                        className="p-1.5 rounded-lg border border-zinc-300 bg-white text-zinc-600 hover:text-zinc-900"
+                        className="p-1.5 rounded-lg border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
                       >
                         {aberto ? <Lock size={14} /> : <Unlock size={14} />}
                       </button>
@@ -534,370 +855,307 @@ export default function AdminSolicitacoesBolsa({ recarregarGeral }) {
         )}
       </div>
 
-      {/* NAVEGAÇÃO ENTRE PENDENTES E HISTÓRICO DE SOLICITAÇÕES */}
-      <div className="bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex gap-2">
+      {/* FILTROS E BUSCA DE CANDIDATOS */}
+      <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => setSubAba('pendentes')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase transition ${
-              subAba === 'pendentes'
-                ? 'bg-[#D81B60] text-white shadow-xs'
+            onClick={() => setFiltroStatus('pendente')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold uppercase transition ${
+              filtroStatus === 'pendente'
+                ? 'bg-[#D81B60] text-white'
                 : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
             }`}
           >
-            <Clock size={15} />
-            Solicitações Pendentes ({solicitacoes.filter((s) => s.status === 'pendente').length})
+            ⏳ Solicitações Pendentes ({qtdPendentes})
           </button>
-
           <button
             type="button"
-            onClick={() => setSubAba('historico')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase transition ${
-              subAba === 'historico'
-                ? 'bg-[#4A041C] text-white shadow-xs'
+            onClick={() => setFiltroStatus('historico')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold uppercase transition ${
+              filtroStatus === 'historico'
+                ? 'bg-[#4A041C] text-white'
                 : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
             }`}
           >
-            <History size={15} />
-            Histórico de Solicitações ({solicitacoes.filter((s) => s.status !== 'pendente').length})
+            📋 Histórico de Solicitações ({qtdHistorico})
           </button>
         </div>
 
         <div className="relative w-full sm:w-64">
-          <Search size={15} className="absolute left-3 top-2.5 text-zinc-400" />
+          <Search size={14} className="absolute left-3 top-3 text-zinc-400" />
           <input
             type="text"
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             placeholder="Buscar candidato ou protocolo..."
-            className="w-full rounded-xl border border-zinc-300 pl-9 pr-3 py-2 text-xs"
+            className="w-full rounded-xl border border-zinc-300 pl-8 pr-3 py-2 text-xs"
           />
         </div>
       </div>
 
-      {/* LISTA DE PENDENTES */}
+      {/* LISTAGEM DE CANDIDATOS */}
       {carregando ? (
-        <div className="text-center py-16 text-sm text-zinc-500">
+        <div className="bg-white p-10 rounded-2xl border border-zinc-200 text-center text-sm text-zinc-500">
           Carregando inscrições...
         </div>
-      ) : subAba === 'pendentes' ? (
-        pendentes.length === 0 ? (
-          <div className="bg-white p-10 rounded-2xl border border-zinc-200 text-center text-sm text-zinc-500">
-            Nenhuma solicitação pendente de avaliação no momento.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {pendentes.map((sol) => (
-              <div
-                key={sol.id}
-                className="bg-white rounded-2xl border border-zinc-200 p-5 shadow-sm flex flex-col justify-between space-y-4"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3.5">
-                    {sol.fotoPerfilUrl ? (
-                      <img
-                        src={sol.fotoPerfilUrl}
-                        alt={sol.nome}
-                        className="w-16 h-16 rounded-2xl object-cover border border-zinc-300 shrink-0"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 rounded-2xl bg-zinc-200 flex items-center justify-center text-xs font-bold text-zinc-500 shrink-0">
-                        Foto
-                      </div>
-                    )}
-
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[10px] font-mono font-bold text-[#D81B60]">
-                        {sol.protocolo}
-                      </span>
-                      <h4 className="text-base font-bold text-zinc-900 truncate">{sol.nome}</h4>
-                      <p className="text-xs text-zinc-600">
-                        {sol.idadeInscricao} anos • {sol.instagram || 'Sem Insta'}
-                      </p>
-                      <p className="text-[11px] text-zinc-500">
-                        Inscrito em:{' '}
-                        {sol.dataInscricao
-                          ? new Date(sol.dataInscricao).toLocaleDateString('pt-BR')
-                          : '—'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 text-xs space-y-1">
-                    <p>
-                      <strong>Nível:</strong> {sol.conhecimentoPrevio}
-                    </p>
-                    <p>
-                      <strong>Dias Úteis:</strong>{' '}
-                      {Array.isArray(sol.diasUteisDisponiveis)
-                        ? sol.diasUteisDisponiveis.map((d) => d.split(' ')[0]).join(', ')
-                        : '—'}
-                    </p>
-                    <p>
-                      <strong>Estilos:</strong>{' '}
-                      {Array.isArray(sol.estilosInteresse) ? sol.estilosInteresse.join(', ') : '—'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-2 pt-2 border-t border-zinc-100">
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFichaAberta(sol)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-zinc-300 py-2 text-xs font-bold uppercase text-zinc-700 hover:bg-zinc-100"
-                    >
-                      <Eye size={14} /> Ficha Completa
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => abrirWhatsAppCandidato(sol, false)}
-                      className="inline-flex items-center justify-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-xs font-bold text-white"
-                      title="Chamar no WhatsApp"
-                    >
-                      <MessageCircle size={15} />
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      disabled={processandoId === sol.id}
-                      onClick={() => handleAprovarCandidato(sol)}
-                      className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-2.5 text-xs font-bold uppercase text-white transition"
-                    >
-                      <UserCheck size={15} />
-                      {processandoId === sol.id ? 'Aprovando...' : 'Aprovar'}
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={processandoId === sol.id}
-                      onClick={() => handleReprovarCandidato(sol)}
-                      className="flex items-center justify-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-700 py-2.5 text-xs font-bold uppercase text-white transition"
-                    >
-                      <XCircle size={15} /> Eliminar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      ) : (
-        /* ABA HISTÓRICO DE SOLICITAÇÕES */
-        <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-base font-bold uppercase font-condensed text-[#4A041C]">
-              Histórico Completo de Solicitações ({historico.length})
-            </h4>
-
-            <div className="flex gap-1.5">
-              {[
-                { id: 'todos', label: 'Todos' },
-                { id: 'aprovado', label: 'Aprovados' },
-                { id: 'reprovado', label: 'Eliminados' },
-              ].map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => setFiltroHistorico(f.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase ${
-                    filtroHistorico === f.id
-                      ? 'bg-[#4A041C] text-white'
-                      : 'bg-zinc-100 text-zinc-600'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {historico.length === 0 ? (
-            <p className="text-sm text-zinc-400 py-8 text-center">
-              Nenhum registro no histórico ainda.
-            </p>
-          ) : (
-            <div className="divide-y divide-zinc-200">
-              {historico.map((item) => (
-                <div
-                  key={item.id}
-                  className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    {item.fotoPerfilUrl && (
-                      <img
-                        src={item.fotoPerfilUrl}
-                        alt={item.nome}
-                        className="w-12 h-12 rounded-xl object-cover border border-zinc-200 shrink-0"
-                      />
-                    )}
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <strong className="text-sm text-zinc-900">{item.nome}</strong>
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                            item.status === 'aprovado'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-red-100 text-red-700'
-                          }`}
-                        >
-                          {item.status === 'aprovado' ? 'Aprovado (Bolsista)' : 'Eliminado'}
-                        </span>
-                      </div>
-                      <p className="text-zinc-500">
-                        {item.protocolo} • {item.editalTitulo}
-                      </p>
-                      {item.motivoResultado && (
-                        <p className="text-zinc-700 mt-0.5">
-                          <strong>Observação:</strong> {item.motivoResultado} (por {item.avaliadoPor})
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 self-end sm:self-center">
-                    <button
-                      type="button"
-                      onClick={() => setFichaAberta(item)}
-                      className="rounded-lg border border-zinc-300 px-3 py-1.5 font-bold text-zinc-700 hover:bg-zinc-100"
-                    >
-                      Ver Ficha
-                    </button>
-                    {item.status === 'aprovado' && (
-                      <button
-                        type="button"
-                        onClick={() => abrirWhatsAppCandidato(item, true)}
-                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white hover:bg-emerald-700"
-                      >
-                        <MessageCircle size={13} /> Avisar Aprovação
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+      ) : solicitacoesFiltradas.length === 0 ? (
+        <div className="bg-white p-10 rounded-2xl border border-zinc-200 text-center text-sm text-zinc-400">
+          {filtroStatus === 'pendente'
+            ? 'Nenhuma solicitação pendente de avaliação no momento.'
+            : 'Nenhum registro no histórico ainda.'}
         </div>
-      )}
-
-      {/* MODAL DE FICHA COMPLETA DO CANDIDATO */}
-      {fichaAberta && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-xl space-y-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between gap-4 border-b border-zinc-200 pb-4">
-              <div className="flex items-center gap-4">
-                {fichaAberta.fotoPerfilUrl && (
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {solicitacoesFiltradas.map((sol) => (
+            <div
+              key={sol.id}
+              className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start gap-3.5">
+                {sol.fotoPerfilUrl ? (
                   <img
-                    src={fichaAberta.fotoPerfilUrl}
-                    alt={fichaAberta.nome}
-                    className="w-20 h-20 rounded-2xl object-cover border border-zinc-300"
+                    src={sol.fotoPerfilUrl}
+                    alt={sol.nome}
+                    className="w-16 h-16 rounded-2xl object-cover border border-zinc-300 shrink-0"
                   />
+                ) : (
+                  <div className="w-16 h-16 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-400 font-bold text-lg shrink-0">
+                    {sol.nome?.charAt(0)}
+                  </div>
                 )}
-                <div>
-                  <span className="text-xs font-mono font-bold text-[#D81B60]">
-                    {fichaAberta.protocolo}
-                  </span>
-                  <h3 className="text-xl font-bold text-zinc-900">{fichaAberta.nome}</h3>
-                  <p className="text-xs text-zinc-600">
-                    {fichaAberta.idadeInscricao} anos • CPF: {fichaAberta.cpf}
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700">
+                      {sol.protocolo}
+                    </span>
+                    <span
+                      className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                        sol.status === 'aprovado'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : sol.status === 'reprovado'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {sol.status === 'aprovado'
+                        ? 'Aprovado • Acesso Liberado'
+                        : sol.status === 'reprovado'
+                        ? 'Não Aprovado'
+                        : 'Aguardando Banca'}
+                    </span>
+                  </div>
+
+                  <h4 className="text-base font-bold text-zinc-900 mt-1 truncate">
+                    {sol.nome}
+                  </h4>
+                  <p className="text-xs text-zinc-500">
+                    {sol.idadeInscricao} anos • {sol.conhecimentoPrevio}
+                  </p>
+                  <p className="text-[11px] text-[#D81B60] font-semibold mt-0.5">
+                    {sol.instagram} • {sol.telefone}
                   </p>
                 </div>
               </div>
 
+              <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 text-xs space-y-1">
+                <p className="text-zinc-700">
+                  <strong>Dias Úteis:</strong> {(sol.diasUteisDisponiveis || []).join(', ')}
+                </p>
+                <p className="text-zinc-700">
+                  <strong>Estilos:</strong> {(sol.estilosInteresse || []).join(', ')}
+                </p>
+                {sol.ultimoLembreteEnviadoEm && (
+                  <p className="text-[10px] font-bold text-amber-700">
+                    🔔 Último lembrete enviado em:{' '}
+                    {new Date(sol.ultimoLembreteEnviadoEm).toLocaleString('pt-BR')}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setCandidatoAberto(sol)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-zinc-300 py-2 text-xs font-bold uppercase text-zinc-700 hover:bg-zinc-100"
+                >
+                  <Eye size={14} /> Ficha Completa
+                </button>
+
+                {sol.status === 'pendente' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={processandoId === sol.id}
+                      onClick={() => handleEnviarLembreteIndividual(sol)}
+                      title="Enviar lembrete por e-mail"
+                      className="inline-flex items-center justify-center gap-1 rounded-xl bg-amber-500 hover:bg-amber-600 px-3 py-2 text-xs font-bold uppercase text-white"
+                    >
+                      <Mail size={14} /> Lembrete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => abrirWhatsAppLembrete(sol)}
+                      title="Mandar lembrete no WhatsApp"
+                      className="inline-flex items-center justify-center gap-1 rounded-xl bg-[#25D366] hover:brightness-95 px-3 py-2 text-xs font-bold uppercase text-white"
+                    >
+                      <Phone size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={processandoId === sol.id}
+                      onClick={() => handleAprovarCandidato(sol)}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold uppercase text-white"
+                    >
+                      <CheckCircle2 size={14} /> Aprovar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={processandoId === sol.id}
+                      onClick={() => handleReprovarCandidato(sol)}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl bg-red-600 hover:bg-red-700 px-3 py-2 text-xs font-bold uppercase text-white"
+                    >
+                      <XCircle size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* MODAL DE FICHA COMPLETA DO CANDIDATO */}
+      {candidatoAberto && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 pb-4">
+              <div className="flex items-center gap-4">
+                {candidatoAberto.fotoPerfilUrl && (
+                  <img
+                    src={candidatoAberto.fotoPerfilUrl}
+                    alt={candidatoAberto.nome}
+                    className="w-20 h-20 rounded-2xl object-cover border border-zinc-300"
+                  />
+                )}
+                <div>
+                  <span className="text-[11px] font-mono font-bold text-[#D81B60]">
+                    {candidatoAberto.protocolo}
+                  </span>
+                  <h3 className="text-xl font-bold text-zinc-900">{candidatoAberto.nome}</h3>
+                  <p className="text-xs text-zinc-500">
+                    CPF: {candidatoAberto.cpf} • Nasc: {candidatoAberto.dataNascimento} (
+                    {candidatoAberto.idadeInscricao} anos)
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setFichaAberta(null)}
-                className="p-2 rounded-xl bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                onClick={() => setCandidatoAberto(null)}
+                className="p-2 rounded-full bg-zinc-100 hover:bg-zinc-200"
               >
                 <X size={18} />
               </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
-              <p>
-                <strong>WhatsApp:</strong> {fichaAberta.telefone}
+              <p className="flex items-center gap-1.5">
+                <Phone size={14} className="text-[#D81B60]" />{' '}
+                <strong>WhatsApp:</strong> {candidatoAberto.telefone}
               </p>
-              <p>
-                <strong>E-mail:</strong> {fichaAberta.email}
-              </p>
-              <p>
-                <strong>Instagram:</strong> {fichaAberta.instagram}
-              </p>
-              <p>
-                <strong>Nascimento:</strong>{' '}
-                {fichaAberta.dataNascimento?.split('-').reverse().join('/')}
+              <p className="flex items-center gap-1.5">
+                <Instagram size={14} className="text-[#D81B60]" />{' '}
+                <strong>Instagram:</strong> {candidatoAberto.instagram}
               </p>
               <p className="sm:col-span-2">
-                <strong>Endereço:</strong> {fichaAberta.endereco}
+                <strong>E-mail (Usuário):</strong> {candidatoAberto.email}
               </p>
-              {fichaAberta.isMenorDe18 && (
-                <p className="sm:col-span-2 text-amber-900 bg-amber-50 p-2 rounded-lg border border-amber-200">
-                  <strong>Responsável Legal:</strong> {fichaAberta.nomeResponsavelLegal} (
-                  {fichaAberta.telefoneResponsavelLegal})
+              <p className="sm:col-span-2">
+                <strong>Endereço:</strong> {candidatoAberto.endereco}
+              </p>
+              {candidatoAberto.isMenorDe18 && (
+                <p className="sm:col-span-2 text-amber-900 bg-amber-100 p-2 rounded-lg">
+                  <strong>Responsável Legal:</strong> {candidatoAberto.nomeResponsavelLegal} (
+                  {candidatoAberto.telefoneResponsavelLegal})
                 </p>
               )}
             </div>
 
-            <div className="space-y-2.5 text-xs">
-              <p>
-                <strong className="text-[#4A041C] uppercase">Conhecimento Prévio:</strong>{' '}
-                {fichaAberta.conhecimentoPrevio}
-              </p>
-              <p>
-                <strong className="text-[#4A041C] uppercase">Conhece o Studio:</strong>{' '}
-                {fichaAberta.conheceStudio} (Soube por: {fichaAberta.comoSoube})
-              </p>
-              <p>
-                <strong className="text-[#4A041C] uppercase">Experiência em Dança:</strong>{' '}
-                {fichaAberta.experienciaSalao}
-              </p>
-              <p>
-                <strong className="text-[#4A041C] uppercase">Disponibilidade:</strong> Sábado (15h–20h) e{' '}
-                {Array.isArray(fichaAberta.diasUteisDisponiveis)
-                  ? fichaAberta.diasUteisDisponiveis.join(', ')
-                  : ''}
-              </p>
-              <p>
-                <strong className="text-[#4A041C] uppercase">Estilos que quer aprender:</strong>{' '}
-                {Array.isArray(fichaAberta.estilosInteresse)
-                  ? fichaAberta.estilosInteresse.join(', ')
-                  : ''}
-              </p>
-              <div className="p-3 rounded-xl bg-pink-50/70 border border-pink-200 space-y-1.5">
+            <div className="space-y-3 text-xs">
+              <div className="p-3.5 rounded-xl border border-zinc-200">
+                <strong className="text-[#4A041C] uppercase block mb-1">
+                  Disponibilidade & Estilos de Interesse:
+                </strong>
                 <p>
-                  <strong>Motivação:</strong> {fichaAberta.motivacaoStudio}
+                  <strong>Sábado (15h–20h):</strong>{' '}
+                  {candidatoAberto.disponibilidadeSabado ? 'Confirmado' : 'Não'}
                 </p>
                 <p>
-                  <strong>Como pode colaborar:</strong> {fichaAberta.comoPodeColaborar}
+                  <strong>Dias Úteis:</strong>{' '}
+                  {(candidatoAberto.diasUteisDisponiveis || []).join(', ')}
                 </p>
-                {fichaAberta.observacoesExtras && (
-                  <p>
-                    <strong>Observações:</strong> {fichaAberta.observacoesExtras}
-                  </p>
-                )}
+                <p>
+                  <strong>Estilos:</strong> {(candidatoAberto.estilosInteresse || []).join(', ')}
+                </p>
               </div>
+
+              {Array.isArray(candidatoAberto.perguntasDetalhadas) &&
+              candidatoAberto.perguntasDetalhadas.length > 0 ? (
+                candidatoAberto.perguntasDetalhadas.map((item, i) => (
+                  <div key={i} className="p-3.5 rounded-xl border border-zinc-200 space-y-1">
+                    <strong className="text-[#4A041C] uppercase block">
+                      {item.enunciado}
+                    </strong>
+                    <p className="text-zinc-700 leading-relaxed">{item.resposta}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
+                  <strong className="text-[#4A041C] uppercase block">
+                    Perfil & Motivação:
+                  </strong>
+                  <p>
+                    <strong>Nível:</strong> {candidatoAberto.conhecimentoPrevio}
+                  </p>
+                  <p>
+                    <strong>Experiência:</strong> {candidatoAberto.experienciaSalao}
+                  </p>
+                  <p>
+                    <strong>Como soube:</strong> {candidatoAberto.comoSoube}
+                  </p>
+                  <p>
+                    <strong>Motivação:</strong> {candidatoAberto.motivacaoStudio}
+                  </p>
+                </div>
+              )}
             </div>
 
-            {fichaAberta.status === 'pendente' && (
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-200">
+            {candidatoAberto.status === 'pendente' && (
+              <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-zinc-200">
                 <button
                   type="button"
-                  disabled={processandoId === fichaAberta.id}
-                  onClick={() => handleAprovarCandidato(fichaAberta)}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-3 text-xs font-bold uppercase text-white"
+                  disabled={processandoId === candidatoAberto.id}
+                  onClick={() => handleEnviarLembreteIndividual(candidatoAberto)}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 py-3 text-xs font-bold uppercase text-white"
                 >
-                  <CheckCircle2 size={16} /> Aprovar & Lançar em Bolsistas
+                  <Mail size={16} /> Enviar Lembrete E-mail
                 </button>
                 <button
                   type="button"
-                  disabled={processandoId === fichaAberta.id}
-                  onClick={() => handleReprovarCandidato(fichaAberta)}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-700 py-3 text-xs font-bold uppercase text-white"
+                  disabled={processandoId === candidatoAberto.id}
+                  onClick={() => handleAprovarCandidato(candidatoAberto)}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 py-3 text-xs font-bold uppercase text-white"
                 >
-                  <XCircle size={16} /> Não Aprovar (Eliminar)
+                  <CheckCircle2 size={16} /> Aprovar & Habilitar Acesso
+                </button>
+                <button
+                  type="button"
+                  disabled={processandoId === candidatoAberto.id}
+                  onClick={() => handleReprovarCandidato(candidatoAberto)}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-700 px-5 py-3 text-xs font-bold uppercase text-white"
+                >
+                  <XCircle size={16} /> Não Aprovar
                 </button>
               </div>
             )}
