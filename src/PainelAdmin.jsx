@@ -218,6 +218,7 @@ export default function PainelAdmin() {
     { id: 'bolsistas_admin', label: 'Bolsistas & Pareceres', icon: Award },
     { id: 'eventos', label: 'Eventos', icon: Calendar },
     { id: 'financeiro', label: 'Financeiro & Lucros', icon: DollarSign },
+    { id: 'solicitacoes_bolsa', label: 'Solicitações de Bolsa', icon: FileCheck2 },
   ];
 
   return (
